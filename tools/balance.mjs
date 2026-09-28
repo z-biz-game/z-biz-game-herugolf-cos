@@ -55,12 +55,12 @@ const BUDGET = DEFAULT_BUDGET_NODES; // 500_000 结点：出货配置本身（js
 const AUDIT_BUDGET = DEFAULT_BUDGET_NODES; // 极小性复算同预算：撞了就叫"这颗没证到"，不另开口径
 const NOW = () => Number(process.hrtime.bigint() / 1000n) / 1000;
 
-// ── 两条轴 ──
+// ── 三条轴 ──
 // 轴 1（命门）：尺寸钉死 10x10，球数 3/4/5/6/7/9 —— 档位按球数定，不是按尺寸定（口径 ⑤）。
 // 轴 2（对照）：球数钉死 5，尺寸 8x8→18x18（64→324 格）—— 把"更大不一定更深"量成数，不是写成话。
 const BALL_AXIS = ['10x10/3', '10x10/4', '10x10/5', '10x10/6', '10x10/7', '10x10/9'];
 const SIZE_AXIS = ['8x8/5', '10x10/5', '12x12/5', '15x15/5', '18x18/5'];
-const ALL_KEYS = [...new Set([...BALL_AXIS, ...SIZE_AXIS])];
+const MENU_AXIS = TIERS.filter((t) => t.inMenu).map((t) => t.key), ALL_KEYS = [...new Set([...BALL_AXIS, ...SIZE_AXIS, ...MENU_AXIS])]; // 轴 3＝菜单本身：前两轴是按球数/尺寸设计的，**不覆盖菜单**——8x8/4、12x12/7、15x15/9、18x18/11 在两轴里一颗都没有，而线表 11 球那根线正是从 18x18/11 量来的。菜单上写得出的档必须实测，"两轴里有相近球数"不算替它担保（"跑了"≠"判了"）。
 const LADDER = (() => {
   const only = argOf('only', '');
   const keys = only ? only.split(',').map((s) => s.trim()).filter(Boolean) : ALL_KEYS;
@@ -91,8 +91,8 @@ const LADDER = (() => {
 //     9 │ 0.19 / 0.51 / 1.06                          │ 10  │ 16 / 23 / 40 │ 100
 //       │ 菜单档 15x15/9 另测得 med 0.95 / p95 3.13 / 最慢 5.95ms、nodes p95 31 / max 43
 //       │ ⇒ 公式值是 20ms / 150，比表内 10ms / 100 松 —— 表内取紧的那个，只紧不松（见上面那段）
-//    11 │ 2.63 / 9.00 / 17.03（18x18/11，菜单顶档；不在默认两轴里，
-//       │ 用 `--only=8x8/4,…,18x18/11 --samples=200 --calibrate` 量到的最坏值）  │ 40  │ 27 / 44 / 75 │ 200
+//    11 │ 2.63 / 9.00 / 17.03（18x18/11，菜单顶档；默认三轴里第 3 轴＝菜单本身 ⇒ 现在每轮都点得到，
+//       │ 当年它是靠 `--only=8x8/4,…,18x18/11 --samples=200 --calibrate` 手点名量出来的最坏值）  │ 40  │ 27 / 44 / 75 │ 200
 // ⚠ 线是按 **200 盘**定的：nearest-rank 分位数（sortedAsc[⌈q·n⌉-1]）随 n 挪格，--samples 变小 p95 会跳到更尾的值。
 // ⚠ 5 球要 20ms 是尺寸轴 18x18/5 把 p95 推到 3.2ms（球数轴自己只要 10ms）——共用一根线就得按最坏的算。
 // ⚠ 这两张线表不是"许可"，是"该档还配不配进菜单"的刀口。调线的唯一合法路径：先量、再写、注释里带上实测 med/p95；
@@ -429,6 +429,15 @@ if (SAMPLES >= 50) {
   notes.push(`ANTI-DRIFT（线表 vs 实测公式值）本轮跳过：--samples=${SAMPLES} < 50 时 nearest-rank p95 跳到更尾的格、公式值不可比；正式口径是 --samples=200`);
 }
 
+// ── 菜单覆盖：inMenu 的档必须档档被本轮点到（"跑了"≠"判了"，见上面轴 3 那段）──
+// 这条盯的是"默认表被人改回两轴"或"TIERS 加了新档而轴没跟着加"：线表里有这一球数的线、实测里
+// 却没有这一档，那根线就变成无人复算的许可。--only 是调试口径 ⇒ 跳过时写进 notes，不静默。
+if (argOf('only', '')) {
+  notes.push(`菜单完整性那条本轮不判：--only=${argOf('only', '')} 是点名调试口径（正式口径是不带 --only 的默认三轴）`);
+} else {
+  for (const k of MENU_AXIS) ok(per[k], `菜单档 ${k} 没被本轮点到：generate.js TIERS 里 inMenu=true 的档必须实测，两轴里有相近球数不算替它担保`);
+}
+
 if (!QUIET && MEASURED_SIZE.length >= 2) {
   console.log(`\n── 尺寸轴读数（球数钉死，格数 ${per[MEASURED_SIZE[0]].N}→${per[MEASURED_SIZE[MEASURED_SIZE.length - 1]].N}，${AREA_MULT.toFixed(1)} 倍）──`);
   for (const rule of RARE_RULES) {
@@ -460,7 +469,7 @@ if (!QUIET) {
   console.log('   每档两行带标签读数（不用对齐列：墙钟三个绝对值 med/p95/最慢 原样在列）');
   for (const k of LADDER) {
     const m = per[k];
-    const axis = MEASURED_BALL.includes(k) && MEASURED_SIZE.includes(k) ? '球数轴+尺寸轴共用' : MEASURED_BALL.includes(k) ? '球数轴' : '尺寸轴';
+    const axis = [MEASURED_BALL.includes(k) && MEASURED_SIZE.includes(k) ? '球数轴+尺寸轴共用' : MEASURED_BALL.includes(k) ? '球数轴' : MEASURED_SIZE.includes(k) ? '尺寸轴' : '菜单轴', MENU_AXIS.includes(k) ? '＋菜单档' : '（不在菜单里）'].join('');
     console.log(
       `   ${k}｜${axis}｜出货 ${m.shipped.length}/${m.n}｜种子 med ${f0(quantile(m.attemptsAsc, 0.5))}/max ${f0(m.attemptsAsc[m.attemptsAsc.length - 1])}｜拒铺率 ${f2(m.rejectRate)}` +
         `｜墙钟 med ${f2(quantile(m.wallAsc, 0.5))}/p95 ${f2(m.wallP95)}/最慢 ${f2(m.wallAsc[m.wallAsc.length - 1])}ms（线 ${m.wallLineMs}ms、band=[${m.band.join(', ')}]、budgetMs=${m.budgetMs}ms）`,
