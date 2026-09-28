@@ -68,9 +68,15 @@ const LADDER = (() => {
   for (const k of keys) parseTier(k); // 认不出的档形当场炸
   return keys;
 })();
-// 绝对线按**球数**给：穷举成本 ∝ ∏(每球候选数)，与格数几乎无关、只与球数有关
-// （js/engine/routes.js 文件头判据 2 的那句话）。所以尺寸轴共用同一根线 —— 尺寸真把成本推高了，
-// 这条线就会替我们咬住；实测是它不咬（见尺寸轴那一节），那句话才敢写进 README。
+// 绝对线按**球数**给：默认口径是尺寸钉死 10x10 的球数轴（口径⑤的阶梯定义），线 = 该轴实测按公式取整。
+// 两条实测事实要写在这里，别拿假设当结论：
+//   · 计数器 nodes 确实与格数几乎无关（5 球：10x10 p95 12 → 18x18 p95 16；9 球：10x10 23 → 15x15 31）
+//     —— 穷举成本 ∝ ∏(每球候选数)（js/engine/routes.js 文件头判据 2），尺寸轴因此共用同一根线。
+//   · 墙钟**不是**这样：5 球 10x10 p95 0.38ms → 18x18 p95 3.19ms（≈8×，铺路/极小化这些趟是 O(格数)）。
+//     所以同一球数的线要按"该球数下所有实测档的最坏"给：5 球因此是 20ms（18x18/5 定），11 球 40ms
+//    （18x18/11 定）；9 球的表内 10ms 比 15x15/9 的公式值 20ms **更紧**（实测 p95 3.13ms，余量 3.2×）——
+//     只紧不松，红了也只许动 balls/maxK/tries，不许反过来把线抬回公式值。"绝对线"那一节逐档把
+//     公式值与表内值并排打出来，这条不吻合就是它自己在喊。
 //
 // 两张表的来历 = 实测回填（跑法 `node tools/balance.mjs`，SAMPLES=200 默认档，seed 串 balance|<档位>|1..200；
 // 2026-09-29 那一轮读到的数：nodes/发火盘数这些纯函数列逐字可复现，墙钟列只当**上界**、每轮会漂）。
@@ -83,12 +89,16 @@ const LADDER = (() => {
 //     6 │ 0.15 / 0.33 / 0.64                          │ 10  │ 11 / 16 / 40 │ 100
 //     7 │ 0.17 / 0.50 / 1.20                          │ 10  │ 12 / 18 / 44 │ 100
 //     9 │ 0.19 / 0.51 / 1.06                          │ 10  │ 16 / 23 / 40 │ 100
+//       │ 菜单档 15x15/9 另测得 med 0.95 / p95 3.13 / 最慢 5.95ms、nodes p95 31 / max 43
+//       │ ⇒ 公式值是 20ms / 150，比表内 10ms / 100 松 —— 表内取紧的那个，只紧不松（见上面那段）
+//    11 │ 2.63 / 9.00 / 17.03（18x18/11，菜单顶档；不在默认两轴里，
+//       │ 用 `--only=8x8/4,…,18x18/11 --samples=200 --calibrate` 量到的最坏值）  │ 40  │ 27 / 44 / 75 │ 200
 // ⚠ 线是按 **200 盘**定的：nearest-rank 分位数（sortedAsc[⌈q·n⌉-1]）随 n 挪格，--samples 变小 p95 会跳到更尾的值。
 // ⚠ 5 球要 20ms 是尺寸轴 18x18/5 把 p95 推到 3.2ms（球数轴自己只要 10ms）——共用一根线就得按最坏的算。
 // ⚠ 这两张线表不是"许可"，是"该档还配不配进菜单"的刀口。调线的唯一合法路径：先量、再写、注释里带上实测 med/p95；
 //   ANTI-DRIFT 那两条断言盯着"线被写松"（松到实测公式值 2 倍以上就红），线表缺档也算红（缺线 = 不判 = 漏网）。
-const WALL_P95_LINE_MS = { 3: 10, 4: 10, 5: 20, 6: 10, 7: 10, 9: 10 };
-const NODES_P95_LINE = { 3: 50, 4: 50, 5: 100, 6: 100, 7: 100, 9: 100 };
+const WALL_P95_LINE_MS = { 3: 10, 4: 10, 5: 20, 6: 10, 7: 10, 9: 10, 11: 40 };
+const NODES_P95_LINE = { 3: 50, 4: 50, 5: 100, 6: 100, 7: 100, 9: 100, 11: 200 };
 
 const GATES = [
   `出货率：每档 ${SAMPLES} 颗种子必须档档出货 ${SAMPLES}/${SAMPLES}（tries 用尽不出货就红，红名指到样本号）`,
@@ -100,7 +110,7 @@ const GATES = [
   '尺寸轴：球数钉死的对照轴上，稀有规则发火盘数按**每 100 格归一**后最高档 ≤ 最低档×1.5 ⇒ 原样打印"更大不一定更深"（将来进 README 的「不承诺」）；绝对盘数一定涨（格数 5.1 倍），只看绝对值会把这句话判没，所以两个口径同表打印',
   '废因：唯一性失败原因只许是「多余解的落点全是正解也用的落点，杀不动」那一条；冒出第二条按新事实报，不并入旧桶',
   '独立复算：出货盘张张要过 计数器唯一 ∧ 铅笔推完 ∧ verify 无错（不吃出货器的返回值）',
-  '线表自身（ANTI-DRIFT，--samples ≥ 50 才判）：写死的线松到实测公式值（⌈p95×4⌉）2 倍以上就红；线表里缺这一档的球数也算红（缺线 = 不判 = 漏网，不是宽容）',
+  '线表自身（ANTI-DRIFT，--samples ≥ 50 才判）：写死的线松到实测公式值（⌈p95×4⌉）2 倍以上就红；线表里缺这一档的球数由逐档那条"没写死绝对线"报红（缺线 = 不判 = 漏网，不是宽容）；表内比公式紧是允许的（只紧不松）',
 ];
 
 let checks = 0;
@@ -316,6 +326,9 @@ function ladderLines() {
     notes.push(`本轮只量到 ${MEASURED_BALL.length} 个球数档（--only= 的结果）⇒ 阶梯红线要比较的是"最高档 vs 最低档"，少于两档不适用，自动跳过`);
     return { lines, skipped: true };
   }
+  if (MEASURED_BALL.length < BALL_AXIS.length) {
+    notes.push(`球数轴只量到 ${MEASURED_BALL.length}/${BALL_AXIS.length} 档（${MEASURED_BALL.join('/')}，--only= 的结果）⇒ 下面的阶梯红线是在这点档上比的，最高档 vs 最低档离得越近越说明不了事`);
+  }
   for (const rule of RARE_RULES) {
     const seq = MEASURED_BALL.map((k) => per[k].firesBoards[rule]);
     const bottom = seq[0];
@@ -387,6 +400,12 @@ if (QUIET) {
     console.log(`\n══ 轴 2：尺寸阶梯（球数钉死 ${parseTier(SIZE_AXIS[0]).balls} 颗；10x10/5 与轴 1 共用，不重复跑）══`);
     for (const k of extraSize) printTier(per[k]);
   }
+  // 两条轴都不沾的点名档（例如 --only= 只指菜单梯子）也必须被判定 —— 不然"跑了"不等于"判了"
+  const others = LADDER.filter((k) => !MEASURED_BALL.includes(k) && !MEASURED_SIZE.includes(k));
+  if (others.length) {
+    console.log(`\n══ 轴外点名档（--only= 指到、不在两条轴里的档；逐档判定照跑，阶梯红线不参与）══`);
+    for (const k of others) printTier(per[k]);
+  }
 }
 
 if (!QUIET) {
@@ -400,6 +419,8 @@ for (const v of LAD.lines) ok(v.ok, `阶梯红线[${v.rule}]：${v.text}`);
 //    只在正式口径（--samples ≥ 50）下判：nearest-rank p95 在小样本会跳到更尾的格，公式值不可比。
 if (SAMPLES >= 50) {
   for (const b of WORST_BALLS) {
+    // 缺档由逐档那条"没写死绝对线"负责报，这里只比"写了但写松了"
+    if (!Object.prototype.hasOwnProperty.call(WALL_P95_LINE_MS, b) || !Object.prototype.hasOwnProperty.call(NODES_P95_LINE, b)) continue;
     const w = worst[b];
     ok(WALL_P95_LINE_MS[b] <= w.budgetMs * 2, `ANTI-DRIFT 墙钟线：球数 ${b} 写死 ${WALL_P95_LINE_MS[b]}ms > 实测公式值 ⌈p95×4⌉→10ms=${w.budgetMs}ms 的 2 倍（实测 p95 ${f2(w.p95)}ms，档 ${w.keys.join('/')}）⇒ 线被写松了；该红的是盘，不是线`);
     ok(NODES_P95_LINE[b] <= ceilTo(w.nodesP95 * 4, 50) * 2, `ANTI-DRIFT nodes 线：球数 ${b} 写死 ${NODES_P95_LINE[b]} > 实测公式值 ⌈p95×4⌉→50=${ceilTo(w.nodesP95 * 4, 50)} 的 2 倍（实测 p95 ${f0(w.nodesP95)}，档 ${w.keys.join('/')}）⇒ 同上`);
@@ -454,9 +475,12 @@ if (!QUIET) {
   console.log('   两条轴同球数取最坏；公式 = 墙钟 ⌈p95×4⌉→10ms（口径①）、nodes ⌈p95×4⌉→50（同一条留余量规则）');
   for (const b of WORST_BALLS) {
     const w = worst[b];
+    const wLine = WALL_P95_LINE_MS[b];
+    const nLine = NODES_P95_LINE[b];
+    const nf = ceilTo(w.nodesP95 * 4, 50);
     console.log(`   球数 ${String(b).padStart(2)}｜实测最坏 med ${f2(w.med)} / p95 ${f2(w.p95)} / 最慢 ${f2(w.slow)}ms（档 ${w.keys.join('/')}）` +
-      `⇒ 墙钟公式线 ${w.budgetMs}ms、表内 ${WALL_P95_LINE_MS[b] ?? '缺'}ms（余量 ${(WALL_P95_LINE_MS[b] / w.p95).toFixed(1)}× p95）` +
-      `｜nodes 最坏 p95 ${f0(w.nodesP95)} / max ${f0(w.nodesMax)} ⇒ 公式线 ${ceilTo(w.nodesP95 * 4, 50)}、表内 ${NODES_P95_LINE[b] ?? '缺'}（余量 ${(NODES_P95_LINE[b] / w.nodesP95).toFixed(1)}× p95）`);
+      `⇒ 墙钟公式线 ${w.budgetMs}ms、表内 ${wLine ?? '缺（=不判，见逐档那条红）'}ms${Number.isFinite(wLine) ? `（余量 ${(wLine / w.p95).toFixed(1)}× p95）` : ''}` +
+      `｜nodes 最坏 p95 ${f0(w.nodesP95)} / max ${f0(w.nodesMax)} ⇒ 公式线 ${nf}、表内 ${nLine ?? '缺（=不判）'}${Number.isFinite(nLine) ? `（余量 ${(nLine / w.nodesP95).toFixed(1)}× p95）` : ''}`);
   }
   const menu = TIERS.filter((t) => t.inMenu);
   notes.push(`generate.js TIERS 的 band/budgetMs 目前仍是占位值（${menu.map((t) => `${t.key} band=[${t.band.join(',')}] budgetMs=${t.budgetMs}`).join(' / ')}），且**没有任何判定路径吃它**（shipPuzzle 只读 w/h/balls/maxK/tries）⇒ 接线留给 ceiling 那一轮，本文件只把实测建议值打出来，不改引擎。`);
