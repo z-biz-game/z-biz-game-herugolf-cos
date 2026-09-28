@@ -1,0 +1,32 @@
+{
+  "name": "z-biz-game-herugolf-cos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Herugolf ヘルゴルフ（Nikoli）— 球按「球里的数字」那么长的一动直线走，一动比一动短，最后落进 H；线不许穿过别的球、H、别的线，不许停在池上。出货的每一盘都由独立穷举计数器在预算内数过唯一解、由五条命名规则的铅笔在零猜测下推到底，并且每颗线索（球/H/池）都单独摘除过一遍（单颗摘除意义的极小，不是线索最少）。端口 5340/5341 本阶段只查实空闲并预留，没有在用；第一阶段只有纯 Node 引擎 + 逻辑门禁（js/engine、tools、tests），浏览器壳（index.html/css/js/main.js/render/ui/server.cjs/verify.sh/workflows）与 Electron 壳都还没开工，也不进清单。",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node tools/check.mjs",
+    "test": "node tools/check.mjs && node tools/rule-test.mjs && node tools/pencil-test.mjs && node tools/counter-test.mjs && node tools/generator-probe.mjs && node tools/golden-test.mjs && node tests/r3-crossing.test.mjs && node tests/r4-pond.test.mjs && node tests/hole-two-balls.test.mjs",
+    "balance": "node tools/balance.mjs",
+    "ceiling": "node tools/ceiling.mjs",
+    "probe": "node tools/generator-probe.mjs",
+    "golden": "node tools/golden-test.mjs",
+    "golden:remint": "node tools/write-golden.mjs --check"
+  },
+  "keywords": [
+    "game",
+    "puzzle",
+    "herugolf",
+    "nikoli",
+    "golf",
+    "logic",
+    "deduction",
+    "unique-solution",
+    "clue-minimality"
+  ],
+  "author": "z-biz-game",
+  "license": "MIT"
+}
