@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// npm test / CI 的总门：两道静态门（语法、引擎禁词）→ 逐个跑逻辑套件 → 逐条读它们打印的 RESULT 行。
+// npm test / CI 的总门：三道静态门（语法、引擎禁词、清单自证）→ 逐个跑逻辑套件 → 逐条读它们打印的 RESULT 行。
 //
 // 为什么静态门跑在逻辑门前面：引擎里混进一个 Math.random 或 process.env，逻辑测试**当天**还是全绿的
 // （node 恰好有那个环境变量、或者随机数恰好站在正确答案那边），红的是三个月后的部署站点或另一台机器。
-// 所以这两条不许靠"跑一遍看看"，必须在读源码的门里就打死。
+// 所以这几条不许靠"跑一遍看看"，必须在读源码的门里就打死。
 //
 // 为什么要**数 RESULT 的行数**：套件被改名、被漏跑、spawn 失败但退出码没传上来，
 // 这三种情况都会表现为"绿了，但少跑了一套"——而"少跑一套"正是这一族门禁最常见的腐化方式
@@ -130,7 +130,30 @@ for (const f of engineFiles) {
 }
 console.log(`禁词门：${engineFiles.length} 个引擎文件 × ${FORBID.length} 个禁词，注释外命中 ${tokenHits} 处`);
 
-/* ---------- 3) 逻辑套件：逐条断言各自的 RESULT 行 ---------- */
+/* ---------- 3) 清单门：package.json 的每条 scripts 必须指向磁盘上真的有的入口 ----------
+ * 空头承诺的形状很具体：scripts 里写了 tools/ceiling.mjs，而那个文件还没落库。
+ * 照 README 敲 `npm run ceiling` 的人拿到的是 ERR_MODULE_NOT_FOUND，而 npm test 全程绿灯 ——
+ * 下面那道逻辑门只跑它自己清单里的套件，看不见清单外面那三条没落地的别名。
+ */
+const pkgPath = join(ROOT, 'package.json');
+ok(existsSync(pkgPath), '没有 package.json：清单门无源可查');
+let pkgScripts = {};
+if (existsSync(pkgPath)) {
+  try {
+    pkgScripts = JSON.parse(readFileSync(pkgPath, 'utf8')).scripts || {};
+  } catch (e) {
+    ok(false, `package.json 解析失败：${e.message}`);
+  }
+}
+const ENTRY = /(?:^|\s)(?:node|bash)\s+(\S+\.(?:mjs|cjs|js|sh))\b/;
+const namedEntries = Object.entries(pkgScripts).map(([name, cmd]) => [name, cmd, ENTRY.exec(String(cmd))]);
+const withEntries = namedEntries.filter(([, , m]) => m);
+ok(withEntries.length === namedEntries.length, `scripts 里有 ${namedEntries.length - withEntries.length} 条跑了 node/bash 却没点名文件入口（${namedEntries.filter(([, , m]) => !m).map(([n, c]) => `${n}=${c}`).join('、')}）：门拒绝猜它跑的是什么`);
+for (const [name, cmd, m] of withEntries) ok(existsSync(join(ROOT, m[1])), `scripts.${name} =「${cmd}」指向 ${m[1]}，磁盘上没有这个文件`);
+const missingEntries = withEntries.filter(([, , m]) => !existsSync(join(ROOT, m[1])));
+console.log(`清单门：package.json 的 ${Object.keys(pkgScripts).length} 条 scripts 中 ${withEntries.length} 条点名了文件入口，${missingEntries.length ? `缺 ${missingEntries.length} 个（${missingEntries.map(([n]) => n).join('、')}）` : '全部在磁盘上'}`);
+
+/* ---------- 4) 逻辑套件：逐条断言各自的 RESULT 行 ---------- */
 const relOf = (p) => relative(ROOT, p).split('\\').join('/');
 const discoveredTests = existsSync(join(ROOT, 'tests')) ? walk(join(ROOT, 'tests'), []).filter((p) => p.endsWith('.test.mjs')).map(relOf) : [];
 const discoveredTools = existsSync(join(ROOT, 'tools')) ? walk(join(ROOT, 'tools'), []).filter((p) => p.endsWith('-test.mjs')).map(relOf) : [];

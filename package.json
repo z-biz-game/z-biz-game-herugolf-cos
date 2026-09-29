@@ -18,10 +18,7 @@
     "test:r4-pond": "node tests/r4-pond.test.mjs",
     "test:hole-two-balls": "node tests/hole-two-balls.test.mjs",
     "balance": "node tools/balance.mjs",
-    "ceiling": "node tools/ceiling.mjs",
-    "probe": "node tools/generator-probe.mjs",
-    "golden": "node tools/golden-test.mjs",
-    "golden:remint": "node tools/write-golden.mjs --check"
+    "probe": "node tools/generator-probe.mjs"
   },
   "keywords": [
     "game",
