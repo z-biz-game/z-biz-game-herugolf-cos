@@ -16,10 +16,11 @@ Nikoli 的"逻辑高尔夫"。题面给你一张盘面，上面只有三种东�
 比如把 R4 写成"池一格都不许碰"，反例照样红、正例（穿过池）却被误杀，出货器会系统性漏掉一大类合法走法，
 玩家看到的是"这盘无解"。所以 R4 的证人在**两侧**都有（`tests/r4-pond.test.mjs`）。
 
-**本仓现在交付到第二阶段：纯 Node 引擎（`js/engine/` 七模块）+ 逻辑门禁（`tools/` + `tests/`）+ 浏览器壳（`index.html` / `css/game.css` / `js/main.js` / `js/store.js` / `js/theme.js` / `js/audio/synth.js` / `js/render/board.js` / `js/ui/game.js` / `server.cjs` / `tools/playtest.cjs`）。**
+**本仓现在交付到第二阶段：纯 Node 引擎（`js/engine/` 七模块）+ 逻辑门禁（`tools/` + `tests/`）+ 文档数字闸（`tools/doctest.mjs`）+ 浏览器壳（`index.html` / `css/game.css` / `js/main.js` / `js/store.js` / `js/theme.js` / `js/audio/synth.js` / `js/render/board.js` / `js/ui/game.js` / `server.cjs` / `tools/playtest.cjs`）。**
 浏览器壳**已在树里、已能开局玩到通关**（下面「第二阶段」那一节是真事件读数）。
-仍然**没有**的东西也照原样写着：`.github/workflows/`、`tools/verify.sh`、Electron 壳、GitHub Pages、任何线上 URL ——
-所以本仓**没有 CI、没有站点、没有任何线上 URL**，`npm test` 是它唯一的自动闸。
+这一轮补上的两件：`tools/verify.sh`（薄总入口，只串闸不加判据）与 `.github/workflows/ci.yml`（check job 跑的就是
+同一条 `bash tools/verify.sh`）—— 所以"本仓没有 CI"这句**已作废**，站点那句还没有：仍然**没有**的东西照原样写着：
+Electron 壳、GitHub Pages、任何线上 URL。`npm test` 仍是唯一的**逻辑**自动闸，文档里的数字另由 `tools/doctest.mjs` 守。
 这一句是承诺表之外最重要的一条：下面所有读数都来自本机跑逻辑闸与本机 headless Chrome，
 没有一个来自部署件。
 
@@ -29,6 +30,8 @@ Nikoli 的"逻辑高尔夫"。题面给你一张盘面，上面只有三种东�
 
 读数那一列全部来自**本轮复跑**（本机 2026-10-02，`npm test` 交出的八行 RESULT，以及
 `node tools/balance.mjs`、`node tools/generator-probe.mjs` 各自的结论行），不是引用上一轮的记录。
+这句话现在不再只由自觉守着：有代码出处的每个现值被 `tools/doctest.mjs` 钉成等式，没有代码出处的
+逐条进那张 unpinned 清单（见「文档数字闸与破坏试验台账」那一节）。
 
 | 承诺 | 谁在判 | 现在的读数 |
 | --- | --- | --- |
@@ -39,17 +42,18 @@ Nikoli 的"逻辑高尔夫"。题面给你一张盘面，上面只有三种东�
 | **难度按球数长，不是按格数长**（这一族的命门） | `node tools/balance.mjs` 轴 1（尺寸钉死 10x10，球数 3/4/5/6/7/9）与轴 2（球数钉死 5，尺寸 8x8→18x18，稀有规则发火盘数按每 100 格归一） | 176 条断言 0 红；必经格 12/200 → 145/200、两球两洞 0/200 → 83/200（3 球 → 11 球）；最高档严格大于最低档且不为 0 |
 | **每颗线索（球 / H / 池）都单独摘除复核过** | `node tools/balance.mjs` 的极小性那条（摘完必须"不再唯一"或"铅笔推不完"至少一条成立）＋ `js/engine/generate.js:auditClueNecessity` | 每档 多余 0 颗 / 没证到 0 颗 / 已证 200/200；口径是**单颗摘除意义的极小**，不是线索最少 |
 | **几何规则有两份互不抄的实现** | `node tests/r3-crossing.test.mjs`、`node tests/r4-pond.test.mjs`、`node tests/hole-two-balls.test.mjs`（`routes.js` 的候选枚举 vs `verify.js` 从题面文字从头再走一遍） | 81 / 53 / 174 条断言 0 红；官方 5×5 的 10 条变异逐条被拒，且逐条对上**实测的归因规则集合** |
-| **清单里没有空头命令** | `node tools/check.mjs` 的清单门（读 `package.json` 自己） | 11 条 scripts 指向的入口全部在磁盘上；这一门落地时先跑了一次阴性自证：注入 `tools/ceiling.mjs` 等三个不存在的入口，它当场报 3 条红且 rc≠0 |
+| **清单里没有空头命令** | `node tools/check.mjs` 的清单门（读 `package.json` 自己） | 14 条 scripts 指向的入口全部在磁盘上；这一门落地时先跑了一次阴性自证：注入 `tools/ceiling.mjs` 等三个不存在的入口，它当场报 3 条红且 rc≠0 |
 
 一条命令跑全部（三道静态门 + 七套逻辑 RESULT 行，另加总门自己那一行）：
 
 ```
 npm test                     # = node tools/check.mjs
+bash tools/verify.sh         # 本地与 CI 的同一条入口：先总门，再文档数字闸
 ```
 
-结论行是 `RESULT check ok=true checks=58 fails=0`，而**整趟交出八行 RESULT**：
+结论行是 `RESULT check ok=true checks=61 fails=0`，而**整趟交出八行 RESULT**：
 `rule-test 194 / pencil-test 89 / counter-test 59 / scenarios 13 / hole-two-balls-test 174 /
-r3-crossing-test 81 / r4-pond-test 53 / check 58`，全部 `ok=true fails=0`。
+r3-crossing-test 81 / r4-pond-test 53 / check 61`，全部 `ok=true fails=0`。
 总门把每套**自报的 RESULT 行原样再念一遍**，所以"少跑了一套"在日志里读得出来：清单里的套件必须在磁盘上、
 必须真的跑起来、必须打 RESULT 行、RESULT 的自报名必须等于由文件名算出的那一个、`checks>0`、
 且收到的行数必须等于清单长度。`tools/*-test.mjs` 与 `tests/*.test.mjs` 是自动发现的 ——
@@ -59,6 +63,9 @@ r3-crossing-test 81 / r4-pond-test 53 / check 58`，全部 `ok=true fails=0`。
 
 ```
 node tools/check.mjs                 # 总门（= npm test）
+node tools/doctest.mjs               # 文档数字闸：README 的每个现值对代码现值
+node tools/sabotage.mjs              # 破坏台账：把每一类谎写回一遍，看闸会不会点名变红
+bash tools/verify.sh                 # 上面两条的总入口（CI 跑的就是这一条）
 node tools/rule-test.mjs             # 五条命名规则 × 独立复核
 node tools/pencil-test.mjs           # 铅笔侧：官方盘 + 出货盘批对账
 node tools/counter-test.mjs          # 计数侧：与候选笛卡尔积 × verify 逐盘相等
@@ -121,9 +128,9 @@ BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
 `npm test` 的头三段在读源码的那一层打死东西，因为逻辑测试**当天**照样全绿：
 
 ```
-语法门：node --check 25/25 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：本阶段还没有 shell 脚本
+语法门：node --check 27/27 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：1/1 个 shell 脚本，零失败
 禁词门：7 个引擎文件 × 7 个禁词，注释外命中 0 处
-清单门：package.json 的 11 条 scripts 中 11 条点名了文件入口，全部在磁盘上
+清单门：package.json 的 14 条 scripts 中 14 条点名了文件入口，全部在磁盘上
 ```
 
 - **禁词**是 `Math.random`、`Date.now`/`new Date`、`performance.now`、`process.env`、`require(`、
@@ -136,6 +143,35 @@ BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
   现在别名已删，门在读清单：任何一条 `scripts` 指向不存在的入口就是红。
   那三个工具本身仍然是**计划**（`balance.mjs` 文件头写着"ceiling（下一轮）答尺寸天花板在哪一档"），
   计划不是承诺，不进清单。
+
+## 文档数字闸与破坏试验台账
+
+上面每一格的读数、档位清单、两张绝对线表、端口、样本量、断言条数，现在由 `tools/doctest.mjs` 逐条对等式：
+它把 README 里的每个「现值」用正则解析出来，与代码或闸的**现在值**一比，每条解析都配一条「解析到几行」的
+反空转断言 —— 正则没命中不是绿，是红（文档改形状、删句子都算红）。真值从三处取：`js/engine/*` 与
+`tools/*` 的常数与数组、`tools/check.mjs` 这一趟现场打出的八行 RESULT 与三道静态门那一三行、
+`tools/generator-probe.mjs` 这一趟的 RESULT 行。这里**不比秒数**：文档第「复跑这些数字」那一节自己写着
+"本 README 不写多少秒跑完" —— 于是这两趟只取 RESULT 行，墙钟量既不写进文档也不写进等式。
+
+它对两类东西刻意不钉：
+
+- **墙钟与本机测量的绝对值**：只比"文档写的数 vs 代码里的线"的来源与方向，不重新计时，绝不把新测的 ms
+  写回文档（`med / p95 / 最慢` 三个数从来不在等式里）。
+- **没有代码出处的数**：要么要 `tools/balance.mjs` 跑满每档 200 盘才有现值（计时口径，不拖进文档闸），
+  要么只有 workspace 根的桌面筛探针 `_tmp-herugolf-{model,counter,gen,pencil}.mjs` 量过 —— 那些探针
+  **不在仓里、clone 不到**。这类数不硬钉，进 doctest 里那张显式 unpinned 清单，unpinned 清单 18 条，
+  每条带一个 needle 断言"这句话原样还在 README 里"：**删掉那句话来变绿，就是那一条红**。
+
+台账的四把刀由 `tools/sabotage.mjs` 从下面这张表里解析（文档改了，跑的就是改后的那一版）。每把只改
+workspace 根下的一份临时副本（`../_tmp-herugolf-sab-<刀号>/`），跑完删掉，**不动工作树**；任何一把没弄红
+就整体判红并点名。最后一列不是抄的，是脚本把退出码读回来写进去的。
+
+| 刀 | 打在哪 | 文件 | 针 | 改成 | 期望点名的断言 | 命令 | 实测 rc |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| K1 | 文档的一个数字：重铺上限 | `README.md` | `tries=30` | `tries=31` | D6i | `node tools/doctest.mjs` | 1 |
+| K2 | 代码的一个常数：nodes 线最低档 | `tools/balance.mjs` | `const NODES_P95_LINE = { 3: 50,` | `const NODES_P95_LINE = { 3: 60,` | D7c nodes线 球数 3 | `node tools/doctest.mjs` | 1 |
+| K3 | 解析器的一个 needle：线表那一行 | `tools/doctest.mjs` | `^墙钟 p95 线（ms）\s+球数` | `^墙钟 p95 线（秒）\s+球数` | D7b | `node tools/doctest.mjs` | 1 |
+| K4 | 代码的另一个常数：probe 的默认 REP | `tools/generator-probe.mjs` | `argOf('rep', 120)` | `argOf('rep', 121)` | D6g | `node tools/doctest.mjs` | 1 |
 
 ## 目录
 
@@ -157,7 +193,7 @@ js/         main.js（接线层：指针+键盘+计时+存档+闸要的 window.h
             ui/game.js（界面状态机：只做点击几何与拒绝理由，赢不赢交给 verify()）
 ```
 
-`合计：源文件 25、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
+`合计：源文件 27、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
 
 引擎里最硬的一条结构约束是 **`verify.js` 一条 `routesFor` 的代码都不许 import**：连方向表都不用，
 动与动之间的几何是从（起点格, 落点格）现算的。它是全仓唯一一条"不许抄自己"的通道 ——
@@ -211,10 +247,11 @@ nodes p95 线        球数 3/4/5/6/7/9/11 = 50 / 50 / 100 / 100 / 100 / 100 / 2
   两球两洞在 3 球出货盘上实测 0/200 发火、在 4 球上 11/200（balance 与 pencil-test 的表为准）。
 - **不承诺出货很快**。`tries=30` 是每档的重铺上限；本轮拒铺率 1.28~5.37（18x18/11 那档最贵），
   最慢一张出货 16.96ms。这是通道成本，不是难度承诺。
-- **不承诺 CI 或站点**。没有 `.github/workflows/`、没有 GitHub Pages、没有任何线上 URL；
-  上面那些浏览器读数全部来自**本机**一次 headless Chrome 手跑，不进 `npm test`，也就不构成"每轮都被守着"。
-  `tools/check.mjs` 里 `SHELLS` 仍是空数组（`tools/verify.sh` 那层自动化没落地 —— 写了就是空头承诺），
-  `EXTRA_JS` 现在只点名磁盘上真有的 `server.cjs`。
+- **不承诺站点**。没有 GitHub Pages、没有任何线上 URL。CI 这一轮落地了（`.github/workflows/ci.yml` 的 check job
+  跑 `bash tools/verify.sh`，与本地同一条命令，没有只在 CI 才有的门），但它只判绿不部署任何东西；
+  上面那些浏览器读数全部来自**本机**一次 headless Chrome 手跑，既不进 `npm test` 也不进 CI，也就不构成"每轮都被守着"。
+  `tools/check.mjs` 里 `SHELLS` 现在点名 `tools/verify.sh`（语法门对它 `bash -n`，脚本落地了就归语法门管），
+  `EXTRA_JS` 仍然只点名磁盘上真有的 `server.cjs`。
 - **不承诺 Electron 壳**（树里没有）、**不承诺 playtest 的场景腿**（`scenario <name>` 实测 rc=1，见上面那张表最后一行）。
 
 ## 端口
@@ -230,6 +267,8 @@ CDP 口 9350（`tools/playtest.cjs` 的默认值，本轮实测空闲后才用�
 
 ```
 npm test                                  # 八行 RESULT，全部 ok=true fails=0
+node tools/doctest.mjs                      # 文档数字闸：条数 + 失败清单（rc=0 才算守住）
+node tools/sabotage.mjs                     # 破坏台账：四把刀必须各把一条 FAIL 弄红
 node tools/balance.mjs                    # 每档 200 盘：出货率/墙钟/nodes/零猜测/极小性/两条阶梯
 node tools/generator-probe.mjs            # 只打账不判（含"复跑一致"摘要断言）
 node server.cjs 5341                      # 浏览器壳：本机起页面（5340 被占就用号对里的第二号）

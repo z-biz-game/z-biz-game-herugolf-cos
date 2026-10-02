@@ -25,7 +25,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIRS = ['js', 'tools', 'tests'];
 const EXTS = ['.js', '.mjs', '.cjs'];
 const EXTRA_JS = ['server.cjs']; // 浏览器壳落地的那一轮点名：根上的服务器不在 js/tools/tests 任何一棵树下
-const SHELLS = []; // 第二阶段才有 tools/verify.sh
+const SHELLS = ['tools/verify.sh']; // 统一入口落地的那一轮点名：树里出现的每个 shell 脚本都要过 bash -n
 const SKIP = (name) => name.startsWith('_tmp-');
 const MIN_SOURCE_FILES = 15; // js/engine 7 + tools 5 + tests 3（现测 15）：少了就是目录被清空/改名
 const ENGINE_DIR = 'js/engine';

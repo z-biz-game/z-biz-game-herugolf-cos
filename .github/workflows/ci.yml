@@ -1,0 +1,32 @@
+name: ci
+
+# 这个 workflow 里**没有任何只在 CI 才有的门**：跑的就是本地那一条 `bash tools/verify.sh`。
+# 反过来说也一样 —— verify.sh 串起来的就是这里的两道闸（tools/check.mjs、tools/doctest.mjs）。
+# 仍然不在这里跑的东西也有两条，理由写在 tools/verify.sh 的文件头：
+#   * `node tools/balance.mjs` / `node tools/generator-probe.mjs`：样本量口径（每档 200 盘 / REP=120）与
+#     墙钟线是给"这条线该多重"定重量的，每天重测一次结论就会把本机负载读成回归；
+#   * `node tools/sabotage.mjs`：破坏台账要改文件、要把实测 rc 写回 README 的台账行。
+# 本站点仍然没有 GitHub Pages、没有任何线上 URL：这个 job 只判绿不判红地部署任何东西。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 统一入口（与本地同一条命令）
+        run: bash tools/verify.sh
+      - name: 把两道闸的日志工件留档
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-logs
+          path: _tmp-herugolf-verify*.log
+          if-no-files-found: warn

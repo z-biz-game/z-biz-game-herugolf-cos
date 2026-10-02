@@ -18,7 +18,10 @@
     "test:r4-pond": "node tests/r4-pond.test.mjs",
     "test:hole-two-balls": "node tests/hole-two-balls.test.mjs",
     "balance": "node tools/balance.mjs",
-    "probe": "node tools/generator-probe.mjs"
+    "probe": "node tools/generator-probe.mjs",
+    "doctest": "node tools/doctest.mjs",
+    "sabotage": "node tools/sabotage.mjs",
+    "verify": "bash tools/verify.sh"
   },
   "keywords": [
     "game",
