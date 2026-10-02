@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0A0D14" />
+<title>ヘルゴルフ · Herugolf 高尔夫推理</title>
+<meta name="description" content="Herugolf ヘルゴルフ（Nikoli）：球按「球里的数字」那么长的一动直线走，一动比一动短，最后落进 H。出货的每一盘唯一解、每一盘都能用五条命名规则零猜测推到底，提示只说推得出的那一步。" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0D14'/%3E%3Cpath d='M5 24c6-1 8-14 14-15' stroke='%234CC38A' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='6' cy='24' r='3.4' fill='%23F5F1E6'/%3E%3Ccircle cx='23' cy='9' r='3.6' fill='none' stroke='%23F5F1E6' stroke-width='2'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/game.css" />
+</head>
+<body data-genre="herugolf">
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <h1>ヘルゴルフ</h1>
+      <p class="sub">Herugolf · Nikoli slug <code>herugolf</code></p>
+    </div>
+    <div class="top-actions">
+      <button id="btn-sound" class="ghost" type="button" aria-pressed="true">音效 开</button>
+      <button id="btn-motion" class="ghost" type="button" aria-pressed="true">动效 全</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-menu" class="view">
+      <div class="menu-hero">
+        <h2>球按数字那么长的一动直线走，一动比一动短，最后落进 H</h2>
+        <p>
+          一颗写着 <b>3</b> 的球：第一动正好开 <b>3</b> 格，第二动正好 <b>2</b> 格，第三动 <b>1</b> 格 ——
+          每一动都必须沿上下左右的直线，方向可以换。落进 H 的球不再动。
+          线不许穿过别的球、不许穿过 H（停在它上面不算穿过）、不许自交，<b>每格最多被一条线通过</b>；
+          不许开出盘外，不许<b>停在</b>池（灰格）上 —— 但可以从池上穿过。
+          这里没有运气题：每一盘都由独立穷举计数器在预算内数过唯一解，也每一盘都能用五条命名规则推到底。
+        </p>
+      </div>
+
+      <div class="menu-cols">
+        <div class="col">
+          <h3 class="col-title">选一档（档名 = 边长/球数）</h3>
+          <div id="tier-list" class="tiers"></div>
+          <p class="menu-disclose">
+            档位旋钮是<b>球数</b>不是尺寸：尺寸轴（球数钉死 5 颗、8×8→18×18）上稀有规则的发火盘数
+            按每 100 格归一后几乎不涨 —— <b>更大不一定更深</b>，这条写在 README 的「不承诺」里。
+          </p>
+          <div id="resume-card" class="resume" hidden>
+            <div class="resume-txt">
+              <strong id="resume-name">未完成的牌局</strong>
+              <span id="resume-meta"></span>
+            </div>
+            <button id="btn-resume" class="primary" type="button">继续</button>
+          </div>
+        </div>
+
+        <div class="col">
+          <h3 class="col-title">纪录（同档比：先看提示几次，再看动数，最后看时间）</h3>
+          <ul id="record-list" class="records"></ul>
+
+          <h3 class="col-title">你会用到的五条命名规则</h3>
+          <ol class="rules" id="rule-list"></ol>
+          <p class="rules-note">提示用的就是这五条（<code>js/engine/pencil.js</code>）：它说出的每一步，都是题面的线索推得出的。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-game" class="view" hidden>
+      <div class="stage">
+        <div class="stage-head">
+          <span id="stat-name" class="puzzle-name">—</span>
+          <span id="stat-tier" class="chip">—</span>
+          <span id="stat-seed" class="chip mono">seed —</span>
+          <span id="stat-time" class="chip mono">00:00</span>
+        </div>
+        <div id="board-wrap">
+          <canvas id="board" tabindex="0" role="img" aria-label="ヘルゴルフ棋盘：点一颗球，再点它这一动要停的那一格"></canvas>
+          <div id="win-veil" hidden>
+            <div class="win-card">
+              <h3>每条线都收进洞了</h3>
+              <p id="win-meta"></p>
+              <p id="win-record" class="win-record"></p>
+              <div class="win-actions">
+                <button id="btn-again" class="primary" type="button">再来一局</button>
+                <button id="btn-menu-2" class="ghost" type="button">回选档</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p id="state-line" class="conflict-line" aria-live="polite"></p>
+      </div>
+
+      <aside class="panel">
+        <div class="acts">
+          <button id="btn-hint" class="primary" type="button">提示<span class="mono" id="hint-count">0</span></button>
+          <button id="btn-undo" class="ghost" type="button">撤销</button>
+          <button id="btn-new" class="ghost" type="button">换一局</button>
+          <button id="btn-menu" class="ghost" type="button">回选档</button>
+        </div>
+
+        <div class="stats">
+          <div class="stat"><span>动数</span><b id="stat-strokes" class="mono">0</b></div>
+          <div class="stat"><span>提示</span><b id="stat-hints" class="mono">0</b></div>
+          <div class="stat"><span>已进洞</span><b id="stat-indone" class="mono">0/0</b></div>
+          <div class="stat"><span>未进洞的球</span><b id="stat-remaining" class="mono">0</b></div>
+          <div class="stat"><span>线占格</span><b id="stat-covered" class="mono">0/0</b></div>
+          <div class="stat"><span>复核不签</span><b id="stat-conflicts" class="mono">0</b></div>
+          <div class="stat"><span>推导步数实测</span><b id="stat-score" class="mono">—</b></div>
+          <div class="stat"><span>这一局出题耗时</span><b id="stat-genms" class="mono">—</b></div>
+        </div>
+
+        <div class="hint-box">
+          <h4 id="hint-rule">提示理由</h4>
+          <p id="hint-line">按 <b>提示</b>（或 <b>H</b> 键）会说出当前推得出的那一步，以及它依据哪条命名规则。</p>
+        </div>
+
+        <div class="legend">
+          <span><i class="sw sw-ball"></i>球（数字 = 第一动走几格）</span>
+          <span><i class="sw sw-hole"></i>H 球洞</span>
+          <span><i class="sw sw-pond"></i>池（可穿过，不许停）</span>
+          <span><i class="sw sw-route"></i>已画的线</span>
+          <span><i class="sw sw-target"></i>这一动的合法落点（圈里的数 = 走几格）</span>
+        </div>
+        <p class="keyhint"><b>点击/触屏</b> 点球选球 · 点格落子 · <b>方向键</b> 把选中的球往那个方向开一动 · <b>空格</b> 换下一颗球 · <b>H</b> 提示 · <b>退格</b>／<b>Z</b> 撤销</p>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>每盘唯一解 · 每盘可用命名规则推到底 · 提示只给推得出的一步 · 同一 seed 同一档出同一张盘 — 由 <code>tools/playtest.cjs</code>（headless Chrome/CDP 真事件）在真实浏览器里逐条断言。</span>
+    <button id="btn-reset" class="link" type="button">清空存档</button>
+  </footer>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
