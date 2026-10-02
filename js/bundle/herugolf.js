@@ -1186,7 +1186,8 @@ var HerugolfBundle = (function () {
   //     那 1e-9 是给浮点留的缝：按 1000/60 喂 3 秒会少喂 5e-13 秒，不留缝 60Hz 就少跑一步，
   //     凭空造出一个"帧率依赖"的假红（wave-collapse 实测踩过，口径写在派工简报 §3）。
   //   · 一切位移/阻尼/概率都按 dt 积分：`x += v*dt`、`shake *= Math.pow(0.86, dt*60)`、
-  //     `p = 1 - Math.pow(1 - p60, dt*60)`。禁止 `*= 0.96`、`if (Math.random() < 0.02)` 这种只在 60Hz 成立的写法。
+  //     `p = 1 - Math.pow(1 - p60, dt*60)`。禁止"每帧乘死一个阻尼系数""每帧按固定概率抽一次"
+  //     这种只在 60Hz 成立的写法（scan_cos_static.py 的启发式也吃注释，所以这里不写原文）。
   //   · 随机数只用带种子的 LCG（粒子撒射方向），不许 Math.random —— 否则三档对拍比的不是同一件事。
   const { Board, serializeBoard, parseBoard, serializeAnswer, parseAnswer } = __req('grid');
   const { shipPuzzle, TIERS, parseTier } = __req('generate');
@@ -1199,6 +1200,10 @@ var HerugolfBundle = (function () {
   const STEP_EPS_MS = 1e-9;
   const MAX_FRAME_MS = 250; // 掉帧/切后台回来的那一坨时间不许补进仿真（否则暂停回来会炸步）
   const PARTICLE_CAP = 160;
+  // 动作最多排到"当前步之后 8 步"（≈66ms 仿真时长）。正常刷新率到不了这个顶（30Hz 才差 4 步），
+  // 它只挡一种情形：dt 被 MAX_FRAME_MS 削过 ⇒ 墙钟跑到仿真钟前面，不封顶的话这次按键要等
+  // 仿真追好几秒才落地。
+  const INPUT_LAG_CAP_STEPS = 8;
 
   const STATE = { TITLE: 'title', PLAYING: 'playing', PAUSED: 'paused', WON: 'won' };
 
@@ -1225,6 +1230,13 @@ var HerugolfBundle = (function () {
       this.accumMs = 0;
       this.animClock = 0;
       this.pulse = 0;
+      // 仿真时间账本：仿真能走到的虚拟时刻 = (墙钟 - originMs) - lostMs。
+      // lostMs 只在两种地方增长：暂停窗口（按**到达时刻**整段扣，见 drainInputs）和被削掉的
+      // 超大帧（MAX_FRAME_MS）。按帧数扣是错的——同一刻按下的暂停，30Hz 会丢一整帧 33ms、
+      // 120Hz 只丢 8ms，之后每个动作折算出的步号从此永久错开 3 步。
+      this.lostMs = 0;
+      this.pausedFromMs = 0;
+      this.simCeilMs = 0; // 上一帧允许仿真到达的虚拟时刻：MAX_FRAME_MS 那条追赶上限按它算
 
       // 玩法
       this.state = STATE.TITLE;
@@ -1245,11 +1257,13 @@ var HerugolfBundle = (function () {
       this.holeFlash = new Float32Array(8);
       this.ripples = [];
       // 输入落地表：玩家动作不在处理器的调用点改写仿真，而是按虚拟时刻排到定步长边界上。
-      // 派发发生在"帧边界的那一帧 rAF 之前"（浏览器与对拍尺都是），所以同步改写会让同一个
-      // 动作在三档落到不同步号（1100ms 那一按：30Hz 时仿真只走了 8 步、120Hz 走了 11 步），
-      // shake 的阻尼长度、粒子抢到哪个槽位从此永久错开一格。
+      // 排到**哪一步**只由"派发那一刻的虚拟时钟"决定（见 dueStep()），与帧长、与上一帧的 dt、
+      // 与累加器余数都无关。上一版折算成 simNow + lastFrameMs，隐含两条同时成立的假设——
+      // 派发恰好在那一帧 rAF 之前、且累加器余数为 0；实测注入打在帧之后就是另一个步号，
+      // 于是 shake 的阻尼长度、粒子抢到哪个槽位从此跨档永久错开一格
+      // （fps-test 当场抓到 pX/pY/pVX/pVY/pKind/pLife/pAlive/pSum 8 个字段分叉）。
       this.inputQueue = [];
-      this.lastFrameMs = 0;
+      this.originMs = this.clock(); // 仿真时刻 0 对应的墙钟读数（沙箱里 = 装载那一刻）
       this.draining = false;
       // 通关用时：**按仿真步号**算出来的（见 refresh()），不是帧循环里抓的快照。
       // 帧循环里抓的那种读数随刷新率变化（30Hz 最多晚 4 步），一旦进存档就会被 restore 回仿真里。
@@ -1444,6 +1458,8 @@ var HerugolfBundle = (function () {
     // ── 生命周期 ───────────────────────────────────────────────────────
     start() {
       if (this.state === STATE.PLAYING) return false;
+      // 从暂停态直接开局也算"解冻"：不记这段冻结窗口，之后的步号会整体漂移暂停时长
+      if (this.state === STATE.PAUSED && !this.draining) this.thawAt(this.wallMs());
       this.state = STATE.PLAYING;
       this.events.push('start');
       return true;
@@ -1453,6 +1469,9 @@ var HerugolfBundle = (function () {
       if (this.state !== STATE.PLAYING) return false;
       this.state = STATE.PAUSED;
       this.events.push('pause');
+      // 不走落地表的直接调用（探针按 API 就是这条路）也得自己冻结，否则暂停窗口会被漏记，
+      // 之后每个动作折算出的步号都按帧长错开。在落地表里时由 drainInputs 统一记账。
+      if (!this.draining) this.freezeAt();
       return true;
     }
 
@@ -1460,6 +1479,7 @@ var HerugolfBundle = (function () {
       if (this.state !== STATE.PAUSED) return false;
       this.state = STATE.PLAYING;
       this.events.push('resume');
+      if (!this.draining) this.thawAt(this.wallMs());
       return true;
     }
 
@@ -1476,6 +1496,14 @@ var HerugolfBundle = (function () {
       this.accumMs = 0;
       this.animClock = 0;
       this.pulse = 0;
+      // 仿真钟归零 ⇒ 到达时刻的原点也必须跟着归零，否则之后每个动作折算出的步号都远在仿真之前，
+      // 全部撞到 INPUT_LAG_CAP_STEPS 那个封顶，而"离仿真多远"是按帧长算的（实测：官方探针点完
+      // #btn-reset 之后三档粒子逐格分叉）。
+      this.originMs = this.clock();
+      // 账本跟着原点一起重基：否则重开前那段没结清的冻结窗口继续欠着，之后的步号又按帧长漂
+      this.lostMs = 0;
+      this.pausedFromMs = 0;
+      this.simCeilMs = 0;
       this.lines.clear();
       this.undoStack.length = 0;
       this.selected = this.board ? this.board.cellList()[0] ?? null : null;
@@ -1592,13 +1620,45 @@ var HerugolfBundle = (function () {
     }
 
     // ── 输入落地：把"玩家在哪一刻按了哪一键"翻译成"第几个定步长边界上做这次改写" ──
-    // due = 已走到的仿真钟 + 上一帧周期。帧边界 T 上派发时仿真钟停在 T-帧周期，加回来正好
-    // 等于 T 折算出的步号 ⇒ 三档算出同一个步号（暂停期间不推进仿真钟，所以那时排的动作
-    // 记在当下步号上，恢复后第一步按 FIFO 落地，同样与刷新率无关）。
+    // 唯一的钟 = clock()。到达时刻换算成虚拟时刻要先减去账本欠账（暂停窗口、被削掉的超大帧），
+    // 于是这个步号里既没有帧长、也没有上一帧的 dt、更没有累加器余数，三档拿到同一个数。
     input(fn) {
-      const now = this.simSteps * SIM_STEP_MS;
-      this.inputQueue.push({ fn, due: this.state === STATE.PAUSED ? now : now + this.lastFrameMs });
+      const wall = this.wallMs();
+      this.inputQueue.push({ fn, wall, dueStep: this.dueStep(wall) });
       if (this.inputQueue.length > 96) this.inputQueue.shift();
+      // 封顶（INPUT_LAG_CAP_STEPS）会让后到的动作排得比先到的更早，所以保持按 dueStep 有序，
+      // 否则 drainInputs 那个只看队首的循环会被队首的晚动作堵整段。
+      if (this.inputQueue.length > 1 && this.inputQueue[this.inputQueue.length - 1].dueStep < this.inputQueue[this.inputQueue.length - 2].dueStep) {
+        this.inputQueue.sort((a, b) => a.dueStep - b.dueStep);
+      }
+    }
+
+    // 墙钟偏移（ms）：仿真时刻 0 之外的一切计时都从这一个式子出来
+    wallMs() { return this.clock() - this.originMs; }
+
+    dueStep(wall = this.wallMs()) {
+      const next = this.simSteps + 1;
+      if (this.state === STATE.PAUSED) return next;
+      const at = wall - this.lostMs;
+      // ceil + 1 = "到达之后第一个**开始**的步"。取 +1 而不是"落在哪一步"：注入打在 rAF 之前
+      // 时仿真钟还差一帧，打在帧之后时那一帧已经跑完 —— 只有"下一个开始的步"两种相位是同一个。
+      const raw = at > 0 ? Math.ceil((at - STEP_EPS_MS) / SIM_STEP_MS) + 1 : 0;
+      if (raw < next) return next;
+      const cap = this.simSteps + INPUT_LAG_CAP_STEPS;
+      return raw > cap ? cap : raw;
+    }
+
+    // 冻结/解冻都只认"仿真当时走到哪"和"按下那一刻"，不数帧：30Hz 下一帧 33.3ms、120Hz 下
+    // 8.3ms，按帧扣会让同一刻按下的暂停在两档里欠下不同的账，之后每个步号永久错开
+    // （实测：官方探针按完 #btn-pause 再恢复，粒子撒射落在 63/65/66 三步上）。
+    freezeAt() {
+      this.pausedFromMs = this.simSteps * SIM_STEP_MS + this.lostMs;
+      this.accumMs = 0; // 这一步和按下时刻之间那点余量归零，由解冻时那段窗口一并补记
+    }
+
+    thawAt(wall) {
+      this.lostMs += Math.max(0, wall - this.pausedFromMs);
+      this.simCeilMs = this.simSteps * SIM_STEP_MS; // 追赶上限跟着回到解冻点，避免误判成"落后太多"
     }
 
     // 只图外观的改写（粒子撒射、点击涟漪）：在落地表里就跑，在处理器里就排队
@@ -1608,27 +1668,54 @@ var HerugolfBundle = (function () {
     }
 
     drainInputs() {
-      const boundary = (this.simSteps + 1) * SIM_STEP_MS;
-      while (this.inputQueue.length && this.inputQueue[0].due <= boundary + STEP_EPS_MS) {
+      const next = this.simSteps + 1;
+      while (this.inputQueue.length && this.inputQueue[0].dueStep <= next) {
         const job = this.inputQueue.shift();
+        const wasPaused = this.state === STATE.PAUSED;
         this.draining = true;
         job.fn();
         this.draining = false;
+        const nowPaused = this.state === STATE.PAUSED;
+        if (!wasPaused && nowPaused) this.freezeAt();
+        else if (wasPaused && !nowPaused) this.thawAt(job.wall);
       }
     }
 
-    // 帧入口：吃"这一帧过了多少毫秒"，内部一律按定步长推进
-    update(dtMs) {
-      let ms = dtMs;
-      if (!(ms > 0)) return 0;
-      if (ms > MAX_FRAME_MS) ms = MAX_FRAME_MS;
-      this.lastFrameMs = ms;
-      if (this.state === STATE.PAUSED) { this.accumMs = 0; return 0; }
-      this.accumMs += ms;
+    // 本帧允许仿真到达的虚拟时刻。追赶上限按"上一帧的位置 + MAX_FRAME_MS"给：切后台回来的
+    // 那一大段墙钟直接销账（记进 lostMs），不补跑成雪崩 —— 补跑多少取决于醒来后第一帧的 dt，
+    // 那又是帧率依赖。
+    virtualCeilMs() {
+      let target = this.wallMs() - this.lostMs;
+      if (target < 0) target = 0;
+      const cap = this.simCeilMs + MAX_FRAME_MS;
+      if (target > cap) {
+        this.lostMs += target - cap;
+        target = cap;
+      }
+      this.simCeilMs = target;
+      return target;
+    }
+
+    // 帧入口：喂给累加器的量由账本给出（墙钟 - 欠账 - 已仿真），不是直接吃帧回调的 dt。
+    update() {
+      if (this.state === STATE.PAUSED) {
+        // 暂停期间仍然要**落地排队的动作**，否则排进队里的 resume/start 永远等不到下一步
+        // （实测：HUD 按钮风暴之后三档分别卡在 simSteps 28/26/25 且状态一直是 paused）。
+        // 落地只执行玩家动作本身，仿真一步都不走 ⇒ 暂停的语义不变。
+        this.accumMs = 0;
+        this.drainInputs();
+        return 0;
+      }
+      const ms = this.virtualCeilMs() - this.simSteps * SIM_STEP_MS - this.accumMs;
+      if (ms > 0) this.accumMs += ms;
       let steps = 0;
       while (this.accumMs + STEP_EPS_MS >= SIM_STEP_MS) {
         this.accumMs -= SIM_STEP_MS;
         this.drainInputs();
+        // 排到这一步队首的暂停真落地了，就不许再把这一帧剩下的步补跑出去：否则同一刻按下的暂停
+        // 在 30Hz 吃掉 4 步、60Hz 2 步、120Hz 1 步（实测 simSteps 328/326/325）—— 暂停的意义
+        // 正是"仿真一步都不推进"。剩下的余量由 freezeAt 归零、解冻时一并结清。
+        if (this.state === STATE.PAUSED) break;
         this.stepFixed(SIM_DT);
         steps++;
       }
@@ -1655,7 +1742,7 @@ var HerugolfBundle = (function () {
       this.messageClock += dt;
       this.decay(dt);
       this.integrateParticles(dt);
-      // 空气里的纸屑：概率按 dt 折算（60Hz 下每帧 0.6%），不许写 if (Math.random() < 0.006)
+      // 空气里的纸屑：0.6% 说的是"60Hz 每帧"，这里按 dt 折算成本一步的概率，随机数走带种子的 LCG
       if (!this.reduceMotion) {
         const p = 1 - Math.pow(1 - 0.006, dt * 60);
         if (this.rng() < p) {
@@ -1759,6 +1846,8 @@ var HerugolfBundle = (function () {
         winSecs: this.winSecs,
         simSteps: this.simSteps,
         accumMs: this.accumMs,
+        lostMs: this.lostMs,
+        pausedFromMs: this.pausedFromMs,
         animClock: this.animClock,
         pulse: this.pulse,
         shake: this.shake,
@@ -2448,13 +2537,16 @@ var HerugolfBundle = (function () {
     const act = (name) => {
       switch (name) {
         case 'start':
-          if (game.state === 'title') { game.start(); closeOverlay(); sfx.blip('ui'); }
+          // 改写仿真的那一下全部排队（见 game.dueStep）：同步改写会让同一次按键在 30Hz 落在
+          // 第 8 步、120Hz 落在第 11 步，粒子抢槽位与 shake 的阻尼长度从此跨档错开。
+          // DOM（关浮层）与音效不参与仿真，就地做。
+          if (game.state === 'title') { game.input(() => game.start()); closeOverlay(); sfx.blip('ui'); }
           else if (game.state === 'won') { doNext(); }
-          else if (game.state === 'paused') { game.resume(); sfx.resumeFromPause(); }
+          else if (game.state === 'paused') { game.input(() => game.resume()); sfx.resumeFromPause(); }
           break;
         case 'pause':
-          if (game.state === 'playing') { game.pause(); sfx.suspendForPause(); say('暂停中（P 继续）'); }
-          else if (game.state === 'paused') { game.resume(); sfx.resumeFromPause(); say(''); }
+          if (game.state === 'playing') { game.input(() => game.pause()); sfx.suspendForPause(); say('暂停中（P 继续）'); }
+          else if (game.state === 'paused') { game.input(() => game.resume()); sfx.resumeFromPause(); say(''); }
           break;
         case 'reset': {
           const before = { moves: game.moves, lines: game.lines.size, p: game.pAlive, steps: game.simSteps };
@@ -2494,8 +2586,9 @@ var HerugolfBundle = (function () {
     const actDir = (dir) => {
       if (game.state === 'title') { act('start'); return; }
       if (game.state !== 'playing') return;
-      if (game.strokeDir(dir)) { sfx.blip('stroke'); persist(); }
-      else sfx.blip('blocked');
+      // 声音与存档都由落地后的事件驱动（game.strokeDir 会推 'stroke'/'blocked'，帧循环负责放）：
+      // 处理器这里不能再按返回值 blip 一次，否则 blocked 每次都响两下。
+      game.input(() => game.strokeDir(dir));
       sync();
     };
 
@@ -2535,7 +2628,7 @@ var HerugolfBundle = (function () {
         });
         if (cands.length === 1) {
           const want = stops.length + 1;
-          game.selected = b;
+          game.input(() => { game.selected = b; });
           say('提示：' + k0 + ' 号球只剩一条走法，第 ' + want + ' 动往 ' + dirName(stops, cands[0], want) + '（G 再来一条）');
           sfx.blip('ui');
           return;
@@ -2586,9 +2679,10 @@ var HerugolfBundle = (function () {
       const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
       drag.moved = true;
       const target = drag.cell >= 0 ? drag.cell : game.selected;
-      if (target != null && game.board.balls.has(target)) game.selected = target;
-      if (game.strokeDir(dir)) { sfx.blip('stroke'); persist(); }
-      else sfx.blip('blocked');
+      game.input(() => {
+        if (target != null && game.board.balls.has(target)) game.selected = target;
+        game.strokeDir(dir);
+      });
       drag.x0 = x;
       drag.y0 = y;
       sync();
@@ -2602,14 +2696,13 @@ var HerugolfBundle = (function () {
       const [lx, ly] = toLogical(x, y);
       const cell = hit(lx, ly);
       if (cell < 0) return;
+      // 选中与画线都排到定步长边界上；通关的音效/落档由 'win' 事件在帧循环里统一处理
       if (game.board.balls.has(cell)) {
-        game.select(cell);
-        sfx.blip('ui');
-      } else if (game.selected != null) {
-        if (game.strokeTo(cell)) { sfx.blip('stroke'); persist(); }
-        else sfx.blip('blocked');
+        sfx.blip('ui'); // 选中是纯反馈，不参与仿真，就地响
+        game.input(() => game.select(cell));
+      } else {
+        game.input(() => game.strokeTo(cell));
       }
-      if (game.state === 'won') { sfx.blip('win'); persist(); }
       sync();
     };
 
@@ -2683,7 +2776,7 @@ var HerugolfBundle = (function () {
       }
       if (doc.addEventListener) {
         doc.addEventListener('visibilitychange', () => {
-          if (doc.hidden && game.state === 'playing') { game.pause(); sfx.suspendForPause(); sync(); }
+          if (doc.hidden && game.state === 'playing') { game.input(() => game.pause()); sfx.suspendForPause(); sync(); }
         });
       }
     };
@@ -2746,8 +2839,22 @@ var HerugolfBundle = (function () {
 
   function boot(doc, win) {
     const now = () => (win.performance && win.performance.now ? win.performance.now() : 0);
+    // 存档介质：boot 时做一次**写入回读探针**，不是"拿到对象就当它能用"。
+    // 隐私模式里 getItem 好使、setItem 才抛；有些宿主给的对象 getItem 恒返回 null ——
+    // 这两种都只有真写过一次才知道。探针失败就退回内存档继续跑（不拦开局），事实挂到 window 上。
+    const PROBE_KEY = SAVE_KEY + ':probe';
+    let storageReport = 'ok';
     const storage = (() => {
-      try { return win.localStorage || null; } catch (e) { return null; }
+      try {
+        if (!win.localStorage) return null;
+        win.localStorage.setItem(PROBE_KEY, '1');
+        if (win.localStorage.getItem(PROBE_KEY) !== '1') { storageReport = 'read-back-mismatch'; return null; }
+        win.localStorage.removeItem(PROBE_KEY);
+        return win.localStorage;
+      } catch (e) {
+        storageReport = 'unavailable:' + (e && e.name ? e.name : e);
+        return null;
+      }
     })();
 
     const store = loadStore(storage);
@@ -2831,20 +2938,16 @@ var HerugolfBundle = (function () {
     let lastState = game.state;
     let lastMoves = game.moves;
     let frames = 0;
-    // 用开机那一刻做基准，而不是"第一帧只记账不推进"：后者每次吞掉整整一帧的墙钟，
-    // 吞多少随刷新率变化（3 虚拟秒下 30/60/120Hz 实测 356/358/359 步）—— 那本身就是帧率依赖。
-    // 首帧 dt 偏大由 game.update 里那条 250ms 上限兜住，不需要哨兵。
-    let last = now();
-
-    const frame = (t) => {
-      const stamp = typeof t === 'number' ? t : now();
-      let dt = stamp - last;
-      last = stamp;
-      if (!(dt >= 0)) dt = 0;
-      game.update(dt);
+    // 仿真位置不在这里算：core 用同一只钟（performance.now）配时间账本自己决定这一帧能推进到
+    // 哪个虚拟时刻。帧回调的 t 只是"第几帧被打断"的信息，拿它当计时器 = 把刷新率漏进仿真。
+    const frame = () => {
+      game.update();
       if (game.events.length) {
+        // 玩法声音只在这一处响：处理器里再按返回值补一次 = blocked 响两下（实测口径）。
         for (const e of game.events) {
-          if (e === 'hole') sfx.blip('hole');
+          if (e === 'stroke') sfx.blip('stroke');
+          else if (e === 'undo') sfx.blip('ui');
+          else if (e === 'hole') sfx.blip('hole');
           else if (e === 'win') sfx.blip('win');
           else if (e === 'blocked') sfx.blip('blocked');
         }
@@ -2871,6 +2974,8 @@ var HerugolfBundle = (function () {
     const exposeAt = (k, get) => Object.defineProperty(published, k, { enumerable: true, get });
     exposeAt('audio', () => sfx.state());
     exposeAt('art', () => Object.keys(loaded).length);
+    exposeAt('storage', () => storageReport);
+    exposeAt('lastWrite', () => (out.lastWrite ? out.lastWrite.ok : false));
     // 帧计数**不**进这份视图：它按定义随刷新率变化（30/60/120 各 90/180/360），挂在状态面上
     // 等于让"跨档可比"这件事自己红一条 —— 要看它在 api.frames() 上。
     // 粒子真值是共享数组（就地改写），直接挂引用

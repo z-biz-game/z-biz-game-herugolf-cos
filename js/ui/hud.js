@@ -63,13 +63,16 @@ export function createHud({ doc, win, game, renderer, sfx, store, onSave, onAudi
   const act = (name) => {
     switch (name) {
       case 'start':
-        if (game.state === 'title') { game.start(); closeOverlay(); sfx.blip('ui'); }
+        // 改写仿真的那一下全部排队（见 game.dueStep）：同步改写会让同一次按键在 30Hz 落在
+        // 第 8 步、120Hz 落在第 11 步，粒子抢槽位与 shake 的阻尼长度从此跨档错开。
+        // DOM（关浮层）与音效不参与仿真，就地做。
+        if (game.state === 'title') { game.input(() => game.start()); closeOverlay(); sfx.blip('ui'); }
         else if (game.state === 'won') { doNext(); }
-        else if (game.state === 'paused') { game.resume(); sfx.resumeFromPause(); }
+        else if (game.state === 'paused') { game.input(() => game.resume()); sfx.resumeFromPause(); }
         break;
       case 'pause':
-        if (game.state === 'playing') { game.pause(); sfx.suspendForPause(); say('暂停中（P 继续）'); }
-        else if (game.state === 'paused') { game.resume(); sfx.resumeFromPause(); say(''); }
+        if (game.state === 'playing') { game.input(() => game.pause()); sfx.suspendForPause(); say('暂停中（P 继续）'); }
+        else if (game.state === 'paused') { game.input(() => game.resume()); sfx.resumeFromPause(); say(''); }
         break;
       case 'reset': {
         const before = { moves: game.moves, lines: game.lines.size, p: game.pAlive, steps: game.simSteps };
@@ -109,8 +112,9 @@ export function createHud({ doc, win, game, renderer, sfx, store, onSave, onAudi
   const actDir = (dir) => {
     if (game.state === 'title') { act('start'); return; }
     if (game.state !== 'playing') return;
-    if (game.strokeDir(dir)) { sfx.blip('stroke'); persist(); }
-    else sfx.blip('blocked');
+    // 声音与存档都由落地后的事件驱动（game.strokeDir 会推 'stroke'/'blocked'，帧循环负责放）：
+    // 处理器这里不能再按返回值 blip 一次，否则 blocked 每次都响两下。
+    game.input(() => game.strokeDir(dir));
     sync();
   };
 
@@ -150,7 +154,7 @@ export function createHud({ doc, win, game, renderer, sfx, store, onSave, onAudi
       });
       if (cands.length === 1) {
         const want = stops.length + 1;
-        game.selected = b;
+        game.input(() => { game.selected = b; });
         say('提示：' + k0 + ' 号球只剩一条走法，第 ' + want + ' 动往 ' + dirName(stops, cands[0], want) + '（G 再来一条）');
         sfx.blip('ui');
         return;
@@ -201,9 +205,10 @@ export function createHud({ doc, win, game, renderer, sfx, store, onSave, onAudi
     const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
     drag.moved = true;
     const target = drag.cell >= 0 ? drag.cell : game.selected;
-    if (target != null && game.board.balls.has(target)) game.selected = target;
-    if (game.strokeDir(dir)) { sfx.blip('stroke'); persist(); }
-    else sfx.blip('blocked');
+    game.input(() => {
+      if (target != null && game.board.balls.has(target)) game.selected = target;
+      game.strokeDir(dir);
+    });
     drag.x0 = x;
     drag.y0 = y;
     sync();
@@ -217,14 +222,13 @@ export function createHud({ doc, win, game, renderer, sfx, store, onSave, onAudi
     const [lx, ly] = toLogical(x, y);
     const cell = hit(lx, ly);
     if (cell < 0) return;
+    // 选中与画线都排到定步长边界上；通关的音效/落档由 'win' 事件在帧循环里统一处理
     if (game.board.balls.has(cell)) {
-      game.select(cell);
-      sfx.blip('ui');
-    } else if (game.selected != null) {
-      if (game.strokeTo(cell)) { sfx.blip('stroke'); persist(); }
-      else sfx.blip('blocked');
+      sfx.blip('ui'); // 选中是纯反馈，不参与仿真，就地响
+      game.input(() => game.select(cell));
+    } else {
+      game.input(() => game.strokeTo(cell));
     }
-    if (game.state === 'won') { sfx.blip('win'); persist(); }
     sync();
   };
 
@@ -298,7 +302,7 @@ export function createHud({ doc, win, game, renderer, sfx, store, onSave, onAudi
     }
     if (doc.addEventListener) {
       doc.addEventListener('visibilitychange', () => {
-        if (doc.hidden && game.state === 'playing') { game.pause(); sfx.suspendForPause(); sync(); }
+        if (doc.hidden && game.state === 'playing') { game.input(() => game.pause()); sfx.suspendForPause(); sync(); }
       });
     }
   };

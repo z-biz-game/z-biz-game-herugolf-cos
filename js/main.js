@@ -21,8 +21,22 @@ const ART = [
 
 export function boot(doc, win) {
   const now = () => (win.performance && win.performance.now ? win.performance.now() : 0);
+  // 存档介质：boot 时做一次**写入回读探针**，不是"拿到对象就当它能用"。
+  // 隐私模式里 getItem 好使、setItem 才抛；有些宿主给的对象 getItem 恒返回 null ——
+  // 这两种都只有真写过一次才知道。探针失败就退回内存档继续跑（不拦开局），事实挂到 window 上。
+  const PROBE_KEY = SAVE_KEY + ':probe';
+  let storageReport = 'ok';
   const storage = (() => {
-    try { return win.localStorage || null; } catch (e) { return null; }
+    try {
+      if (!win.localStorage) return null;
+      win.localStorage.setItem(PROBE_KEY, '1');
+      if (win.localStorage.getItem(PROBE_KEY) !== '1') { storageReport = 'read-back-mismatch'; return null; }
+      win.localStorage.removeItem(PROBE_KEY);
+      return win.localStorage;
+    } catch (e) {
+      storageReport = 'unavailable:' + (e && e.name ? e.name : e);
+      return null;
+    }
   })();
 
   const store = loadStore(storage);
@@ -106,20 +120,16 @@ export function boot(doc, win) {
   let lastState = game.state;
   let lastMoves = game.moves;
   let frames = 0;
-  // 用开机那一刻做基准，而不是"第一帧只记账不推进"：后者每次吞掉整整一帧的墙钟，
-  // 吞多少随刷新率变化（3 虚拟秒下 30/60/120Hz 实测 356/358/359 步）—— 那本身就是帧率依赖。
-  // 首帧 dt 偏大由 game.update 里那条 250ms 上限兜住，不需要哨兵。
-  let last = now();
-
-  const frame = (t) => {
-    const stamp = typeof t === 'number' ? t : now();
-    let dt = stamp - last;
-    last = stamp;
-    if (!(dt >= 0)) dt = 0;
-    game.update(dt);
+  // 仿真位置不在这里算：core 用同一只钟（performance.now）配时间账本自己决定这一帧能推进到
+  // 哪个虚拟时刻。帧回调的 t 只是"第几帧被打断"的信息，拿它当计时器 = 把刷新率漏进仿真。
+  const frame = () => {
+    game.update();
     if (game.events.length) {
+      // 玩法声音只在这一处响：处理器里再按返回值补一次 = blocked 响两下（实测口径）。
       for (const e of game.events) {
-        if (e === 'hole') sfx.blip('hole');
+        if (e === 'stroke') sfx.blip('stroke');
+        else if (e === 'undo') sfx.blip('ui');
+        else if (e === 'hole') sfx.blip('hole');
         else if (e === 'win') sfx.blip('win');
         else if (e === 'blocked') sfx.blip('blocked');
       }
@@ -146,6 +156,8 @@ export function boot(doc, win) {
   const exposeAt = (k, get) => Object.defineProperty(published, k, { enumerable: true, get });
   exposeAt('audio', () => sfx.state());
   exposeAt('art', () => Object.keys(loaded).length);
+  exposeAt('storage', () => storageReport);
+  exposeAt('lastWrite', () => (out.lastWrite ? out.lastWrite.ok : false));
   // 帧计数**不**进这份视图：它按定义随刷新率变化（30/60/120 各 90/180/360），挂在状态面上
   // 等于让"跨档可比"这件事自己红一条 —— 要看它在 api.frames() 上。
   // 粒子真值是共享数组（就地改写），直接挂引用
