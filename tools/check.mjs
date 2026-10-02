@@ -24,7 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // 否则第一个红会变成"测试文件写坏了没人发现"。
 const DIRS = ['js', 'tools', 'tests'];
 const EXTS = ['.js', '.mjs', '.cjs'];
-const EXTRA_JS = []; // 第二阶段发浏览器壳时才点名 server.cjs
+const EXTRA_JS = ['server.cjs']; // 浏览器壳落地的那一轮点名：根上的服务器不在 js/tools/tests 任何一棵树下
 const SHELLS = []; // 第二阶段才有 tools/verify.sh
 const SKIP = (name) => name.startsWith('_tmp-');
 const MIN_SOURCE_FILES = 15; // js/engine 7 + tools 5 + tests 3（现测 15）：少了就是目录被清空/改名

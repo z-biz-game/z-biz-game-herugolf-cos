@@ -16,17 +16,18 @@ Nikoli 的"逻辑高尔夫"。题面给你一张盘面，上面只有三种东�
 比如把 R4 写成"池一格都不许碰"，反例照样红、正例（穿过池）却被误杀，出货器会系统性漏掉一大类合法走法，
 玩家看到的是"这盘无解"。所以 R4 的证人在**两侧**都有（`tests/r4-pond.test.mjs`）。
 
-**本仓现在交付到第一阶段：纯 Node 引擎（`js/engine/` 七模块）+ 逻辑门禁（`tools/` + `tests/`）。**
-浏览器壳（`index.html` / `css` / `js/main.js` / `js/render` / `js/ui` / `server.cjs` / `tools/verify.sh`）
-和 `.github/workflows/` 都**还没开工**，因此本仓**没有 CI、没有站点、没有任何线上 URL**，
-`npm test` 是它唯一的闸。这一句是承诺表之外最重要的一条：下面所有读数都来自本机跑逻辑闸，
+**本仓现在交付到第二阶段：纯 Node 引擎（`js/engine/` 七模块）+ 逻辑门禁（`tools/` + `tests/`）+ 浏览器壳（`index.html` / `css/game.css` / `js/main.js` / `js/store.js` / `js/theme.js` / `js/audio/synth.js` / `js/render/board.js` / `js/ui/game.js` / `server.cjs` / `tools/playtest.cjs`）。**
+浏览器壳**已在树里、已能开局玩到通关**（下面「第二阶段」那一节是真事件读数）。
+仍然**没有**的东西也照原样写着：`.github/workflows/`、`tools/verify.sh`、Electron 壳、GitHub Pages、任何线上 URL ——
+所以本仓**没有 CI、没有站点、没有任何线上 URL**，`npm test` 是它唯一的自动闸。
+这一句是承诺表之外最重要的一条：下面所有读数都来自本机跑逻辑闸与本机 headless Chrome，
 没有一个来自部署件。
 
 ---
 
 ## 八条承诺，每条都是一条会红的命令
 
-读数那一列全部来自**本轮复跑**（本机 2026-09-29，`npm test` 交出的八行 RESULT，以及
+读数那一列全部来自**本轮复跑**（本机 2026-10-02，`npm test` 交出的八行 RESULT，以及
 `node tools/balance.mjs`、`node tools/generator-probe.mjs` 各自的结论行），不是引用上一轮的记录。
 
 | 承诺 | 谁在判 | 现在的读数 |
@@ -78,12 +79,49 @@ node tools/generator-probe.mjs --rep=24 --only=8x8/4
 本轮 `node tools/generator-probe.mjs` 交出 `RESULT generator-probe ok=true checks=116 fails=0`
 （REP=120 × 六个菜单档）；`node tools/balance.mjs` 交出 `RESULT balance ok=true checks=176 fails=0`。
 
+## 第二阶段：浏览器壳落库后，可玩性是怎么被证明的
+
+启动与闸（**都不在 `npm test` 里**：它们要一个真的 Chrome，CI 那一层还不存在）：
+
+```
+node server.cjs            # 默认 5340（本仓预留的第一号）
+node server.cjs 5341       # 端口被占就点第二号；本轮跑的就是 5341
+BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
+```
+
+本轮实跑（本机 headless Chrome 154 + CDP 9350，服务器 5341；**5340 当时被本仓上一轮遗留的
+`node server.cjs 5340` 进程占着，没有动它，改用同一对里预留的 5341**）：
+
+| 腿 | 命令 | 读数 |
+| --- | --- | --- |
+| 开机 | `node tools/playtest.cjs open http://127.0.0.1:5341/` | `window.herugolf` 在、零 console 输出、零异常 |
+| 鼠标真事件 | `… leg mouse` | 28 条断言 fail=0：100 格每格中心都命中 canvas、四个按钮中心都命中自己、落子 0→1、斜对面被 R2 拒、撤销退回 0、换一局 seed 自增、提示计数 1 |
+| 触屏真事件 | `… leg touch`（390×844·dpr3 覆写） | 31 条断言 fail=0：同上 + 窄屏整盘留在视口里 |
+| 键盘真事件 | `… leg keys` | 21 条断言 fail=0：四只键各「1 seen/1 handled/0 repeat/1 total」、方向键落子、退格清空、H 出提示、空格换球 |
+| 深链 / 重载 | `… nav … same`、`… reload` | 各 4 条 fail=0：片段导航 timeOrigin 与文档身份不变；reload 两个都换 |
+| 通关 | `… eval`（引擎那一解逐动走界面唯一入口 `write()`） | `10x10/5` seed 5：17 笔全被接受（`refused=0`）、`status=won`、`verify()` 0 错、5/5 进洞、胜利遮罩有矩形、纪录写进 `best` 与 `totals.solved=1` |
+| 续局 | `… eval` 存档 → `reload` → `… eval` 按「继续」 | 换文档（`doc11umgm0i`→`doc1h56uyr6`）后读回同一串 `4:1-17-25;8:32-48-56`、动数 6、画布 384×384 且渲染层绑到这一盘 |
+| 场景腿 | `… scenario play` | **红（rc=1），原样记着不粉饰**：`tools/scenarios.js` 是纯 Node 夹具（带 `from 'node:process'`，且从不定义 `window.__ng`），注进页面就是 `SyntaxError: Cannot use import statement outside a module`。浏览器侧场景模块**没有落地**，所以这条不是承诺，也不进上面那张表 |
+
+落库时抓到的四处「整局不可玩 / 假绿」，都在这一轮修掉了：
+
+1. `js/main.js` 的 `begin()` 原来在容器还 `hidden`（`display:none`）时调 `view.layout()` ⇒
+   `clientWidth` 读到 0 ⇒ 格边长退到最小档，**玩家第一眼是一张 200px 的小盘**，而下一次 layout
+   又把面板整体推下去 ⇒ 真事件坐标全漂（它的红长在「按提示计一次数 got 0」那一行上）。
+   改成先 `showGame()` 再 `view.layout(game)`，`js/render/board.js` 也不再把 0 宽当成容器宽度。
+2. `resumeSaved()` 从来不调 `view.layout()` ⇒ 从菜单直接按「继续」时渲染层的 `game` 还是 null，
+   `draw()` 第一行就收工：**档续上了、盘整个不画**（300×150 空画布）。
+3. `js/store.js` 的 `record()` 一个调用者都没有，`#win-record` 也没人写过 ⇒ 界面印着
+   「纪录（同档比：先看提示几次，再看动数，最后看时间）」而那张表永远是一列「—」。现在赢的那一刻记一次档。
+4. `tools/playtest.cjs` 里 `ck('提示说出的是命名规则之一', window_is(…))` 把一个 Promise 交给判定函数
+   ⇒ Promise 恒真、**那条断言永远不可能红**。已改成 `await window_is(…)`；白名单仍由引擎那张表现算。
+
 ## 三道静态门，跑在逻辑门前面
 
 `npm test` 的头三段在读源码的那一层打死东西，因为逻辑测试**当天**照样全绿：
 
 ```
-语法门：node --check 17/17 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*）；bash -n：本阶段还没有 shell 脚本
+语法门：node --check 25/25 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：本阶段还没有 shell 脚本
 禁词门：7 个引擎文件 × 7 个禁词，注释外命中 0 处
 清单门：package.json 的 11 条 scripts 中 11 条点名了文件入口，全部在磁盘上
 ```
@@ -110,10 +148,16 @@ js/engine/  grid.js（Board + 全仓唯一的 DIRS 方向表）rng.js（hashSeed
             generate.js（出货通道：由解铺题面 → 反例驱动补池挖唯一 → 摘池极小化 → 双条件闸）
 tools/      check.mjs（总门）rule-test pencil-test counter-test scenarios.js
             generator-probe.mjs（观测器）balance.mjs（难度实测 + 绝对线表 + ANTI-DRIFT）
+            playtest.cjs（最小 CDP 台架：open/leg mouse|touch|keys/nav/reload/witness/answer/eval/logs）
 tests/      hole-two-balls.test.mjs r3-crossing.test.mjs r4-pond.test.mjs   ← 三张规则证人
+index.html  css/game.css  server.cjs（零依赖静态服务器，同时答根路径与 /z-biz-game-herugolf-cos/ 前缀）
+js/         main.js（接线层：指针+键盘+计时+存档+闸要的 window.herugolf 面）
+            store.js（localStorage：设置/纪录/seed 游标/续局快照）theme.js（调色板 → CSS 变量）
+            audio/synth.js（零依赖 WebAudio 三个音）render/board.js（单 canvas，格坐标只有一份）
+            ui/game.js（界面状态机：只做点击几何与拒绝理由，赢不赢交给 verify()）
 ```
 
-`合计：源文件 17、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
+`合计：源文件 25、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
 
 引擎里最硬的一条结构约束是 **`verify.js` 一条 `routesFor` 的代码都不许 import**：连方向表都不用，
 动与动之间的几何是从（起点格, 落点格）现算的。它是全仓唯一一条"不许抄自己"的通道 ——
@@ -167,19 +211,29 @@ nodes p95 线        球数 3/4/5/6/7/9/11 = 50 / 50 / 100 / 100 / 100 / 100 / 2
   两球两洞在 3 球出货盘上实测 0/200 发火、在 4 球上 11/200（balance 与 pencil-test 的表为准）。
 - **不承诺出货很快**。`tries=30` 是每档的重铺上限；本轮拒铺率 1.28~5.37（18x18/11 那档最贵），
   最慢一张出货 16.96ms。这是通道成本，不是难度承诺。
-- **不承诺界面、CI 或站点**。第一阶段没有浏览器壳，也就没有浏览器闸、没有 GitHub Pages、没有线上 URL；
-  `tools/check.mjs` 里的 `EXTRA_JS` 与 `SHELLS` 两个空数组是留给第二阶段的口子，现在写进去就是空头承诺。
+- **不承诺 CI 或站点**。没有 `.github/workflows/`、没有 GitHub Pages、没有任何线上 URL；
+  上面那些浏览器读数全部来自**本机**一次 headless Chrome 手跑，不进 `npm test`，也就不构成"每轮都被守着"。
+  `tools/check.mjs` 里 `SHELLS` 仍是空数组（`tools/verify.sh` 那层自动化没落地 —— 写了就是空头承诺），
+  `EXTRA_JS` 现在只点名磁盘上真有的 `server.cjs`。
+- **不承诺 Electron 壳**（树里没有）、**不承诺 playtest 的场景腿**（`scenario <name>` 实测 rc=1，见上面那张表最后一行）。
 
 ## 端口
 
 **5340 / 5341** 分给本仓，立项时查实过空闲（全 workspace 无文件提及、无进程监听）。
-第一阶段**没有在用** —— 没有任何服务器、没有 CDP 口，这两个号只是占位以免第二阶段撞车。
+第二阶段在用：`server.cjs` 默认监听 **5340**，**5341** 是同一对里预留的备用号（`node server.cjs 5341`）。
+本轮 5340 被上一轮遗留在本仓目录里的 `node server.cjs 5340` 进程占着，没有动那个进程，整趟 playtest 跑在 5341 上。
+CDP 口 9350（`tools/playtest.cjs` 的默认值，本轮实测空闲后才用）。
+为什么要写死专属号：别的车道同时在跑各自的服务器，端口撞了就会拿到**另一个仓**的 index.html ——
+那种绿比红更糟。
 
 ## 复跑这些数字
 
 ```
 npm test                                  # 八行 RESULT，全部 ok=true fails=0
 node tools/balance.mjs                    # 每档 200 盘：出货率/墙钟/nodes/零猜测/极小性/两条阶梯
+node tools/generator-probe.mjs            # 只打账不判（含"复跑一致"摘要断言）
+node server.cjs 5341                      # 浏览器壳：本机起页面（5340 被占就用号对里的第二号）
+BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse   # 真事件那条腿（要 Chrome）
 node tools/balance.mjs --dose=10x10/6#3   # 线的自证：摘掉一颗线索，红线必须咬住
 node tools/generator-probe.mjs            # 只打账不判（含"复跑一致"摘要断言）
 ```

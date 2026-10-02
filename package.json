@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Herugolf ヘルゴルフ（Nikoli）— 球按「球里的数字」那么长的一动直线走，一动比一动短，最后落进 H；线不许穿过别的球、H、别的线，不许停在池上。出货的每一盘都由独立穷举计数器在预算内数过唯一解、由五条命名规则的铅笔在零猜测下推到底，并且每颗线索（球/H/池）都单独摘除过一遍（单颗摘除意义的极小，不是线索最少）。端口 5340/5341 本阶段只查实空闲并预留，没有在用；第一阶段只有纯 Node 引擎 + 逻辑门禁（js/engine、tools、tests），浏览器壳（index.html/css/js/main.js/render/ui/server.cjs/verify.sh/workflows）与 Electron 壳都还没开工，也不进清单。",
+  "description": "Herugolf ヘルゴルフ（Nikoli）— 球按「球里的数字」那么长的一动直线走，一动比一动短，最后落进 H；线不许穿过别的球、H、别的线，不许停在池上。出货的每一盘都由独立穷举计数器在预算内数过唯一解、由五条命名规则的铅笔在零猜测下推到底，并且每颗线索（球/H/池）都单独摘除过一遍（单颗摘除意义的极小，不是线索最少）。第二阶段浏览器壳已落库（index.html/css/js/main.js/js/render/js/ui/js/store.js/js/theme.js/js/audio/server.cjs/tools/playtest.cjs），可玩性由 tools/playtest.cjs 在 headless Chrome 里断言；Electron 壳与 tools/verify.sh、CI、GitHub Pages 仍不在树里，也就没有任何线上 URL。端口 5340/5341 本仓预留（5340 上一轮已被本仓自己的 server.cjs 占着，第二阶段实跑用 5341）。",
   "engines": {
     "node": ">=18"
   },
