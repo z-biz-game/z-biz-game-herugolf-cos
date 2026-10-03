@@ -128,7 +128,7 @@ BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
 `npm test` 的头三段在读源码的那一层打死东西，因为逻辑测试**当天**照样全绿：
 
 ```
-语法门：node --check 27/27 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：1/1 个 shell 脚本，零失败
+语法门：node --check 28/28 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：1/1 个 shell 脚本，零失败
 禁词门：7 个引擎文件 × 7 个禁词，注释外命中 0 处
 清单门：package.json 的 14 条 scripts 中 14 条点名了文件入口，全部在磁盘上
 ```
@@ -193,7 +193,7 @@ js/         main.js（接线层：指针+键盘+计时+存档+闸要的 window.h
             ui/game.js（界面状态机：只做点击几何与拒绝理由，赢不赢交给 verify()）
 ```
 
-`合计：源文件 27、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
+`合计：源文件 28、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
 
 引擎里最硬的一条结构约束是 **`verify.js` 一条 `routesFor` 的代码都不许 import**：连方向表都不用，
 动与动之间的几何是从（起点格, 落点格）现算的。它是全仓唯一一条"不许抄自己"的通道 ——
