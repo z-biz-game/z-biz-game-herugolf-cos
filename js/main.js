@@ -177,6 +177,7 @@ function resumeSaved() {
 }
 
 function startTicker() {
+  paused = false;   // 新开局/恢复都从这里起算：闸门先开，再让 ticker 跑
   if (ticker) clearInterval(ticker);
   ticker = setInterval(tick, 250);
   tick();
@@ -599,3 +600,44 @@ if (document.readyState === 'loading') {
 } else {
   bootFullscreen();
 }
+
+// ---- 暂停：真的把仿真冻住 ----
+//
+// 本仓持续推进的仿真有两样，都归 elapsedMs 管：① 250ms 的 ticker 心跳（它每次把 elapsedMs()
+// 刷进 #stat-time）；② elapsedMs 本身 = baseElapsed + (nowMs() - startedAt)，跟着墙钟走。
+// setPaused(true)：baseElapsed 落账、startedAt 归 0、ticker 停 ⇒ elapsedMs() 之后恒等于
+// baseElapsed，墙钟再走多久都加不上去。
+// setPaused(false)：startedAt 重设成 nowMs() 再起 ticker ⇒ 恢复后的第一帧不会把暂停期间
+// 憋下的墙钟一次性灌进来（没有 dt 尖峰）。
+// 用 var 不用 let：本段在文件末尾，startTicker() 可能在它之前就被 begin() 调过，let 会 TDZ 抛。
+var paused = false;
+function setPaused(v) {
+  v = !!v;
+  if (v === paused) return paused;
+  if (v) {
+    baseElapsed = elapsedMs();
+    startedAt = 0;
+    if (ticker) clearInterval(ticker);
+    ticker = 0;
+  } else {
+    startedAt = nowMs();
+    startTicker();
+  }
+  paused = v;
+  var b = document.getElementById('btn-pause');
+  if (b) {
+    b.setAttribute('aria-pressed', String(paused));
+    b.textContent = paused ? '继续' : '暂停';
+    b.title = paused ? '继续 (P)' : '暂停 (P)';
+  }
+  return paused;
+}
+function togglePause() { return setPaused(!paused); }
+function isPaused() { return paused; }
+
+document.getElementById('btn-pause').addEventListener('click', togglePause);
+window.addEventListener('keydown', function (ev) {
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (ev.target && /input|textarea|select/i.test(ev.target.tagName)) return;
+  if (ev.key === 'p' || ev.key === 'P') { ev.preventDefault(); togglePause(); }
+});
