@@ -15,6 +15,8 @@ export class Sound {
     this.broken = '';
   }
   ensure() {
+    // 静音态连 ctx 都不许建、不许拉起来：静音期间这个 AudioContext 根本没有在跑。
+    if (this.muted) return null;
     if (this.ctx || this.broken) return this.ctx;
     const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (!AC) {
@@ -28,7 +30,46 @@ export class Sound {
     }
     return this.ctx;
   }
+  /**
+   * 真静音：挂起整个 AudioContext，不是把音量拧到 0。
+   * 简报 §2：只把 gain 设 0 是假静音 —— 节点照建、时钟照跑，取消静音还有尾巴。
+   * 偏好单独记在 cos.mute：它决定"这个 AudioContext 允不允许跑起来"，
+   * 而注入的 enabled() 决定控件显示成什么样，两边都要。
+   */
+  setMuted(on) {
+    const next = !!on;
+    if (next === this.muted) return this.muted;
+    this.muted = next;
+    if (this.ctx) {
+      if (next) {
+        if (this.ctx.state === 'running' && this.ctx.suspend) this.ctx.suspend().catch(() => {});
+      } else if (this.ctx.state === 'suspended' && this.ctx.resume) {
+        this.ctx.resume().catch(() => {});
+      }
+    }
+    try {
+      localStorage.setItem('cos.mute', next ? '1' : '0');
+    } catch { /* 隐私模式下写不进去也不该炸游戏 */ }
+    return this.muted;
+  }
+
+  isMuted() {
+    return !!this.muted;
+  }
+
+  /** init 用：把存档偏好灌进静音态（重开一局不会自己弹回来） */
+  syncFromStore() {
+    let saved = null;
+    try {
+      saved = localStorage.getItem('cos.mute');
+    } catch { /* 读不到就沿用 store 的值 */ }
+    // 没有 cos.mute 时退回 store：老存档里"关声"也应该真的关声。
+    const off = saved === null ? !this.enabled() : saved === '1';
+    return this.setMuted(off);
+  }
+
   play(name) {
+    if (this.muted) return false;
     if (!this.enabled()) return false;
     const t = TONES[name];
     const ctx = this.ensure();

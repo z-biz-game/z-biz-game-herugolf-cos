@@ -316,12 +316,26 @@ $('#btn-resume').addEventListener('click', () => {
   const r = resumeSaved();
   if (!r) say('续不上那份档（题面重出不来或存档读不出档位）。');
 });
+// ---- 静音开关 -----------------------------------------------------------------------
+// 控件状态、store 偏好、真静音（suspend AudioContext）三件事一起翻。
+// 真静音在 js/audio/synth.js 的 Sound.setMuted 里做，偏好由它落盘到 localStorage。
 $('#btn-sound').addEventListener('click', (e) => {
   const on = !store.get('sound');
   store.set('sound', on);
+  sound.setMuted(!on);
   e.currentTarget.setAttribute('aria-pressed', String(on));
   e.currentTarget.textContent = on ? '音效 开' : '音效 关';
   if (on) sound.play('stroke');
+});
+
+// M 在本仓未被占用，走房规键位。这里只把按键翻译成"点一下音效按钮"。
+window.addEventListener('keydown', (ev) => {
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName || '')) return;
+  if (ev.key === 'm' || ev.key === 'M') {
+    ev.preventDefault();
+    $('#btn-sound').click();
+  }
 });
 $('#btn-motion').addEventListener('click', (e) => {
   const on = !store.get('motion');
@@ -399,6 +413,8 @@ function boot() {
   setReduceMotion(!motionOn);
   $('#btn-motion').setAttribute('aria-pressed', String(motionOn));
   $('#btn-motion').textContent = motionOn ? '动效 全' : '动效 简';
+  // 存档里是关声的，AudioContext 一开始就该是挂起的（重开一局不会自己弹回来）
+  sound.syncFromStore();
   $('#btn-sound').setAttribute('aria-pressed', String(store.get('sound')));
   $('#btn-sound').textContent = store.get('sound') ? '音效 开' : '音效 关';
   renderRules();
