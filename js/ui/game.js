@@ -41,6 +41,32 @@ export class Game {
     this.own = new Map();
     this.recomputeOwn();
   }
+
+  // 重开**同一道题**：把这一局整个归零，题面不动。
+  //
+  // 本仓的形态与同族那几仓不同，值得说清楚为什么这里没有 resetInk() 那一层：
+  // 本仓的引擎侧（grid.js / generate.js）根本不持有玩家状态——球盘的题面是纯数据，
+  // 玩家画的那一笔一笔**全在 UI 这一层的 Game 实例上**。所以"清引擎"这一步在这里
+  // 是空的，真正要点的名的是全部：走线 lines、撤销栈 hist、落笔数 strokeCount、
+  // 选中的球 selected、提示次数 hints、胜负 status、面板文案 msg、上一条提示 lastHint、
+  // 以及由走线算出来的 own（重算，不手填）。
+  //
+  // 少点一样会怎样：只清 lines 而不清 hist，玩家按撤销还能把走错的那一格退回来；
+  // 不清 hints，提示要收钱这件事就被白嫖了；不清 selected，重开后第一下键盘操作
+  // 动的是一颗他看不见选中的球。
+  resetAll() {
+    this.lines = new Map();        // 走线全清
+    this.hist = [];                // 撤销栈全清：只清 lines 而留着它，玩家还退得回去
+    this.strokeCount = 0;          // 落笔数归零
+    this.selected = this.board.cellList()[0] ?? null;  // 选中的球回第一颗
+    this.hints = 0;                // 提示次数归零：提示要收钱，留着等于让玩家白嫖上一局的帮助
+    this.status = 'playing';       // 胜负回判：上一局通了也不能把重开后的盘算成已通关
+    this.msg = { kind: 'idle', rule: '', text: '点一颗球，再点它这一动要停在的那一格。' };
+    this.lastHint = null;          // 上一条提示属于上一局
+    this.own = new Map();          // 归属表重算
+    this.recomputeOwn();
+    return this;
+  }
   get balls() {
     return this.board.cellList();
   }

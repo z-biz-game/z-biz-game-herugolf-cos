@@ -152,6 +152,33 @@ function begin({ tier = MENU[0].key, seed = null } = {}) {
   return game;
 }
 
+// 重开：**同一道题**从头再来 —— 走线、撤销栈、落笔数、选中的球、提示次数、计时、结算遮罩
+// 全部归零，但不换题。跟「换一局」的分工：换一局是重铺一道新盘（那是"再来一局"），
+// 这里是"这盘我走错了，原地重来"——玩家要的是同一张盘。
+//
+// 特意不走 begin()：那一条的第一件事是 ship(seed, tier) 重铺题面，等于把题也换了。
+// 本仓玩家画的那一笔一笔全在 UI 层（引擎侧是纯题面数据），所以复位就是点名 UI 那一层，
+// 详见 Game.resetAll 的注释。
+function restart() {
+  if (!game) return null;
+  game.resetAll();               // 走线 + hist + strokeCount + selected + hints + status + msg + lastHint + own
+  el.winVeil.hidden = true;      // 结算遮罩收起：上一局赢了的遮罩不能压在重开后的盘上
+  baseElapsed = 0;               // 耗时归零
+  // 暂停中重开就保持停表，否则 startTicker() 会把暂停期间憋下的墙钟一次性灌进计时。
+  if (paused) {
+    startedAt = 0;
+    if (ticker) clearInterval(ticker);
+    ticker = null;
+  } else {
+    startTicker();               // 没暂停就重新起跑，重开后的计时是这一局自己的
+  }
+  game.msg = { kind: 'idle', rule: '', text: `球 ${game.selected} 已经选中：这一动正好走 ${game.needOf(game.selected)} 格。蓝圈是它够得着的落点。` };
+  showGame();
+  sync();
+  persist();                     // 存档覆盖成本局的空盘：刷新页面不会又冒出走错那半局
+  return game;
+}
+
 function resumeSaved() {
   const r = store.resume(tierOf);
   if (!r) return null;
@@ -261,6 +288,14 @@ function pressKey(e) {
     e.preventDefault();
     return true;
   }
+  // R 重开同一题，**局中就能按**（不只结算后）：玩家画到一半发现这盘走不通，当场 R 一下。
+  // 本仓原先没有任何键占着 R（空格换选球，⌫/Z 撤销，H 提示，方向键走格，M 静音，P 暂停），
+  // 所以不需要换键。
+  if (k === 'r' || k === 'R') {
+    restart();
+    e.preventDefault();
+    return true;
+  }
   return false;
 }
 
@@ -302,6 +337,7 @@ document.addEventListener(
 
 // 按钮
 $('#btn-hint').addEventListener('click', useHint);
+$('#btn-restart').addEventListener('click', restart);
 $('#btn-undo').addEventListener('click', () => {
   if (!game) return;
   game.undo();
@@ -443,6 +479,8 @@ boot();
 
 // ---------- 闸要的这盘面 ----------
 window.herugolf = {
+  // 挂在窗口上是为了让探针能真的驱动一次重开、读 BEFORE/AFTER，而不必合成点击。
+  restart,
   version: VERSION,
   doc: DOC,
   engine: {
