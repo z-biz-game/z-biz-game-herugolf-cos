@@ -20,7 +20,7 @@ RC_ALL=0
 for cmd in "${GATES[@]}"; do
   tag=$(echo "$cmd" | tr ' /.' '___')
   log="_tmp-herugolf-verify-${tag}.log"
-  echo "▶ $cmd   （日志：$log）"
+  echo "▶ $cmd   （日志：${log}）"
   T0=$(date +%s)
   $cmd >"$log" 2>&1
   RC=$?
@@ -29,7 +29,7 @@ for cmd in "${GATES[@]}"; do
   tail -3 "$log" | sed 's/^/  │ /'
   if [ "$RC" -ne 0 ]; then
     RC_ALL=1
-    echo "  ✗ $cmd 红了（rc=$RC）：整档输出在 $log"
+    echo "  ✗ $cmd 红了（rc=${RC}）：整档输出在 $log"
   fi
 done
 
