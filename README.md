@@ -48,7 +48,7 @@ Electron 壳、GitHub Pages、任何线上 URL。`npm test` 仍是唯一的**逻
 
 ```
 npm test                     # = node tools/check.mjs
-bash tools/verify.sh         # 本地与 CI 的同一条入口：先总门，再文档数字闸
+bash tools/verify.sh         # 本地与 CI 的同一条入口：九道闸 = 总门 + 文档数字闸 + 七套逻辑套件各一条 rc
 ```
 
 结论行是 `RESULT check ok=true checks=61 fails=0`，而**整趟交出八行 RESULT**：
@@ -58,6 +58,13 @@ r3-crossing-test 81 / r4-pond-test 53 / check 61`，全部 `ok=true fails=0`。
 必须真的跑起来、必须打 RESULT 行、RESULT 的自报名必须等于由文件名算出的那一个、`checks>0`、
 且收到的行数必须等于清单长度。`tools/*-test.mjs` 与 `tests/*.test.mjs` 是自动发现的 ——
 新增一张证人不必改清单，**删一张**则同时撞 `MIN_*_SUITES` 和行数那条，当场红。
+
+`bash tools/verify.sh` 那一层现在交出**九行带名色的读数**（每条闸一行 `▶ 命令` + 一行 `rc=`，再把它自己那一行
+`RESULT <套件> ok= …` 原样念回来），并且每条闸把自己的 `GATE_RC` 记进 `_tmp-herugolf-verify-<tag>.log`：
+七套逻辑套件各占一条，是因为挤在总门那一行里时"哪一套红了"只写在整档输出里，工件那一侧读不到名。
+两条口径同时守死：`logs` 与 `gates` 必须相等（某条闸被坏路径悄悄跳过 ⇒ 当场 `ok=false`，不给你绿），
+闸红时入口还会把日志里那些 `✗ 套件名: …` 的红因挑出来点名。这一条不是散文：把 `tests/r4-pond.test.mjs`
+掰断一根判据再跑总入口，`verify.sh` 退 1 且输出里出现 `r4-pond-test`（副本里做的，仓内一根判据没动）。
 
 单独跑：
 
@@ -81,8 +88,18 @@ node tools/generator-probe.mjs       # 观测器：只打出货通道的账，�
 node tools/generator-probe.mjs --rep=24 --only=8x8/4
 ```
 
-`balance` 与 `generator-probe` **不在 `npm test` 里**，这是有意的：它们的样本量口径（每档 200 盘 / 120 盘）
-是"给线定重量"用的，写进 CI 就变成每天重测一次结论，而墙钟那条线的绝对值跟着本机负载走。
+`balance` 与 `generator-probe` **不在 `npm test`（= `node tools/check.mjs`）里**，但这两条的"在哪跑"并不一样，
+上一轮把它们写成同一条 exclusion 是错的：
+
+- `node tools/generator-probe.mjs` **已经在 CI 里**：`tools/doctest.mjs` 每一趟都现场把它跑一遍取现值，
+  并由 D6j/D6k 判那一行的 `ok` 与 `fails` —— 全量口径 REP=120 × 六个菜单档，本机这一趟是 2s 量级。
+  所以"样本量口径（每档 200 盘 / 120 盘）太贵、进不了常驻门"这句对 probe 不成立，`bash tools/verify.sh`
+  跑的时候它就在 doctest 那一格里被跑掉了。
+- `node tools/balance.mjs` **只有本地跑**，而且理由不是慢：默认口径（每档 200 盘）本机这一趟 4s 量级就跑完。
+  拦它的是它自己的判据里有一条**绝对墙钟线**（墙钟 p95 ≤ 按球数写死的 ms 线，`tools/balance.mjs` 里那张线表），
+  那一列读的是跑它的那台机器的负载 —— 写进常驻门就等于每天把本机负载读成回归，也正是 `doctest.mjs` 把它
+  放进 `NOTRUN`（"不许把计时口径拖进来"）的同一个理由。要它判一次：本地直接跑下面那条，结论行照打。
+
 本轮 `node tools/generator-probe.mjs` 交出 `RESULT generator-probe ok=true checks=116 fails=0`
 （REP=120 × 六个菜单档）；`node tools/balance.mjs` 交出 `RESULT balance ok=true checks=176 fails=0`。
 
@@ -253,6 +270,13 @@ nodes p95 线        球数 3/4/5/6/7/9/11 = 50 / 50 / 100 / 100 / 100 / 100 / 2
   `tools/check.mjs` 里 `SHELLS` 现在点名 `tools/verify.sh`（语法门对它 `bash -n`，脚本落地了就归语法门管），
   `EXTRA_JS` 仍然只点名磁盘上真有的 `server.cjs`。
 - **不承诺 Electron 壳**（树里没有）、**不承诺 playtest 的场景腿**（`scenario <name>` 实测 rc=1，见上面那张表最后一行）。
+
+**没有覆盖**（`bash tools/verify.sh` 那九条闸之外，仍然只有人跑过、没有常驻门的东西，一条条列在这里）：
+`node tools/balance.mjs` 的那 176 条（绝对墙钟线读机器负载 ⇒ 只本地跑，理由见「一条命令跑全部」那一节）、
+`node tools/sabotage.mjs` 的破坏台账（要改文件、要回写台账 rc，属于"证明闸会红"那一层）、
+`node tools/playtest.cjs` 的浏览器腿（要本机 Chrome + 本机 `server.cjs`，`npm test` 与 CI 都跑不动它）。
+除这三类之外，`package.json` 里每一条 `test*` 入口都有自己的一条闸与自己的一个日志工件，没有"进了 scripts
+却没进门禁"的那种套件。
 
 ## 端口
 

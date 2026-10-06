@@ -1,11 +1,14 @@
 name: ci
 
 # 这个 workflow 里**没有任何只在 CI 才有的门**：跑的就是本地那一条 `bash tools/verify.sh`。
-# 反过来说也一样 —— verify.sh 串起来的就是这里的两道闸（tools/check.mjs、tools/doctest.mjs）。
-# 仍然不在这里跑的东西也有两条，理由写在 tools/verify.sh 的文件头：
-#   * `node tools/balance.mjs` / `node tools/generator-probe.mjs`：样本量口径（每档 200 盘 / REP=120）与
-#     墙钟线是给"这条线该多重"定重量的，每天重测一次结论就会把本机负载读成回归；
+# 反过来说也一样 —— verify.sh 串起来的就是这里的九道闸（总门、文档数字闸，再加七套逻辑套件各自一条 rc）。
+# 仍然不在这里跑的只有两条，理由写在 tools/verify.sh 的文件头：
+#   * `node tools/balance.mjs`：它的判据里有一条**绝对墙钟线**（墙钟 p95 ≤ 按球数写死的 ms 线），那一列读的是
+#     跑它的那台机器的负载 ⇒ 常驻门会把本机负载读成回归。**理由不是嫌它慢**：默认口径（每档 200 盘）本机
+#     这一趟 4s 量级就跑完，"样本量太贵"那条旧说法已被实测推翻；
 #   * `node tools/sabotage.mjs`：破坏台账要改文件、要把实测 rc 写回 README 的台账行。
+#   （`node tools/generator-probe.mjs` 以前也被列在这里，那是错的：tools/doctest.mjs 每趟都现场跑它取现值，
+#     并由 D6j/D6k 判它的 ok=true ∧ fails=0 —— REP=120 × 六个菜单档这一趟 2s 量级，本来就已经在 CI 里。）
 # 本站点仍然没有 GitHub Pages、没有任何线上 URL：这个 job 只判绿不判红地部署任何东西。
 
 on:
@@ -23,7 +26,7 @@ jobs:
           node-version: '20'
       - name: 统一入口（与本地同一条命令）
         run: bash tools/verify.sh
-      - name: 把两道闸的日志工件留档
+      - name: 把九道闸的日志工件留档（每条闸一个 _tmp-herugolf-verify-*.log，rc 记在工件里）
         if: always()
         uses: actions/upload-artifact@v4
         with:
