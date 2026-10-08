@@ -105,7 +105,7 @@ node tools/generator-probe.mjs --rep=24 --only=8x8/4
 
 ## 第二阶段：浏览器壳落库后，可玩性是怎么被证明的
 
-启动与闸（**都不在 `npm test` 里**：它们要一个真的 Chrome，CI 那一层还不存在）：
+启动与闸（**都不在 `npm test` 里**：它们要一个真的 Chrome，而 CI 那一跑只有一个步骤 `bash tools/verify.sh`（`f0ef2e0` 的 run 37452212479，绿），没有 Chrome 腿，所以这一节的读数全部来自本机手跑）：
 
 ```
 node server.cjs            # 默认 5340（本仓预留的第一号）
