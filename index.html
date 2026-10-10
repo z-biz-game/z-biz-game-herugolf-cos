@@ -1,114 +1,143 @@
 <!DOCTYPE html>
-<html lang="zh-Hans">
+<html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>ヘルゴルフ Herugolf｜ Nikoli 逻辑高尔夫（一球一洞 · 唯一解认证）</title>
-<meta name="description" content="Nikoli 的「逻辑高尔夫」：球按自己数字那么长的一动直线走，一动比一动短，最后落进 H。线不许穿别的球、H、别的线，不许停在池上但可穿过。每一盘都由独立穷举计数器数过唯一解、由五条命名规则的铅笔零猜测推到底。">
-<meta name="theme-color" content="#f2ece0">
-<meta name="color-scheme" content="light">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Herugolf">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" type="image/png" sizes="16x16" href="web/icons/favicon-16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="web/icons/favicon-32.png">
-<link rel="icon" type="image/png" sizes="48x48" href="web/icons/favicon-48.png">
-<link rel="icon" type="image/png" sizes="64x64" href="web/icons/favicon-64.png">
-<link rel="icon" type="image/png" sizes="96x96" href="web/icons/favicon-96.png">
-<link rel="apple-touch-icon" href="web/icons/apple-touch-icon-180.png">
-<link rel="canonical" href="./">
-<meta property="og:type" content="website">
-<meta property="og:title" content="ヘルゴルフ Herugolf｜ Nikoli 逻辑高尔夫">
-<meta property="og:description" content="带数字的球走直线、一动比一动短、落进 H。出货的每一盘：唯一解数过 + 铅笔零猜测推完。">
-<meta property="og:image" content="web/social/og-1200x630.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="web/social/og-1200x630.png">
-<link rel="stylesheet" href="css/app.css">
-</head>
-<body>
-<noscript><p class="noscript">这是个 canvas 游戏，需要 JavaScript。引擎本身（<code>js/engine/</code>）是纯 ESM，可以在 Node 里直接跑逻辑闸：<code>npm test</code>。</p></noscript>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#0A0D14" />
+<title>ヘルゴルフ · Herugolf 高尔夫推理</title>
+<meta name="description" content="Herugolf ヘルゴルフ（Nikoli）：球按「球里的数字」那么长的一动直线走，一动比一动短，最后落进 H。出货的每一盘唯一解、每一盘都能用五条命名规则零猜测推到底，提示只说推得出的那一步。" /><meta property="og:title" content="ヘルゴルフ · Herugolf 高尔夫推理"><meta property="og:description" content="Herugolf ヘルゴルフ（Nikoli）：球按「球里的数字」那么长的一动直线走，一动比一动短，最后落进 H。出货的每一盘唯一解、每一盘都能用五条命名规则零猜测推到底，提示只说推得出的那一步。"><meta property="og:image" content="https://z-biz-game.github.io/z-biz-game-herugolf-cos/icons/icon-512.png"><meta name="twitter:image" content="https://z-biz-game.github.io/z-biz-game-herugolf-cos/icons/icon-512.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0D14'/%3E%3Cpath d='M5 24c6-1 8-14 14-15' stroke='%234CC38A' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='6' cy='24' r='3.4' fill='%23F5F1E6'/%3E%3Ccircle cx='23' cy='9' r='3.6' fill='none' stroke='%23F5F1E6' stroke-width='2'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/game.css" />
 
-<div id="app" class="app">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+</head>
+<body data-genre="herugolf">
+<div id="app">
   <header class="topbar">
-    <h1 class="wordmark"><span class="jp">ヘルゴルフ</span><span class="latin">HERUGOLF</span></h1>
-    <dl class="stats" aria-label="本局读数">
-      <div><dt>档</dt><dd id="stat-tier">8x8/4</dd></div>
-      <div><dt>进洞</dt><dd id="stat-solved">0/0</dd></div>
-      <div><dt>动数</dt><dd id="stat-moves">0</dd></div>
-      <div><dt>用时</dt><dd id="stat-time">0:00</dd></div>
-      <div><dt>最佳</dt><dd id="stat-best">—</dd></div>
-      <div><dt>盘面来源</dt><dd id="stat-src">—</dd></div>
-    </dl>
+    <div class="brand">
+      <h1>ヘルゴルフ</h1>
+      <p class="sub">Herugolf · Nikoli slug <code>herugolf</code></p>
+    </div>
+    <div class="top-actions">
+      <button id="btn-sound" class="ghost" type="button" aria-pressed="true" title="静音 / 恢复音效 · M">音效 开</button>
+      <button type="button" id="btn-pause" class="ghost" aria-pressed="false" title="暂停 (P)">暂停</button><button type="button" id="btn-fullscreen" class="ghost" aria-pressed="false" title="全屏 (F)">全屏</button>
+      <button id="btn-motion" class="ghost" type="button" aria-pressed="true">动效 全</button>
+    </div>
   </header>
 
-  <div id="boardwrap" class="boardwrap">
-    <canvas id="board" width="900" height="700" aria-label="ヘルゴルフ 盘面：带数字的球、H 球洞、池。点球选中，点目标格或滑动走一动。" role="img"></canvas>
-  </div>
+  <main>
+    <section id="view-menu" class="view">
+      <div class="menu-hero">
+        <h2>球按数字那么长的一动直线走，一动比一动短，最后落进 H</h2>
+        <p>
+          一颗写着 <b>3</b> 的球：第一动正好开 <b>3</b> 格，第二动正好 <b>2</b> 格，第三动 <b>1</b> 格 ——
+          每一动都必须沿上下左右的直线，方向可以换。落进 H 的球不再动。
+          线不许穿过别的球、不许穿过 H（停在它上面不算穿过）、不许自交，<b>每格最多被一条线通过</b>；
+          不许开出盘外，不许<b>停在</b>池（灰格）上 —— 但可以从池上穿过。
+          这里没有运气题：每一盘都由独立穷举计数器在预算内数过唯一解，也每一盘都能用五条命名规则推到底。
+        </p>
+      </div>
 
-  <div id="hud" class="hud" role="toolbar" aria-label="操作">
-    <button id="btn-start" class="hudbtn primary" type="button">開始 Enter</button>
-    <button id="btn-pause" class="hudbtn" type="button">暂停 P</button>
-    <button id="btn-undo" class="hudbtn" type="button">撤销 U</button>
-    <button id="btn-reset" class="hudbtn" type="button">重开 R</button>
-    <button id="btn-next" class="hudbtn" type="button">下一局 N</button>
-    <button id="btn-hint" class="hudbtn" type="button">提示 G</button>
-    <button id="btn-mute" class="hudbtn" type="button" aria-pressed="false">音效 开</button>
-    <button id="btn-full" class="hudbtn" type="button">全屏 F</button>
-    <button id="btn-help" class="hudbtn" type="button">玩法 ?</button>
-    <label class="tierpick" for="sel-tier">难度
-      <select id="sel-tier" name="tier"></select>
-    </label>
-  </div>
+      <div class="menu-cols">
+        <div class="col">
+          <h3 class="col-title">选一档（档名 = 边长/球数）</h3>
+          <div id="tier-list" class="tiers"></div>
+          <p class="menu-disclose">
+            档位旋钮是<b>球数</b>不是尺寸：尺寸轴（球数钉死 5 颗、8×8→18×18）上稀有规则的发火盘数
+            按每 100 格归一后几乎不涨 —— <b>更大不一定更深</b>，这条写在 README 的「不承诺」里。
+          </p>
+          <div id="resume-card" class="resume" hidden>
+            <div class="resume-txt">
+              <strong id="resume-name">未完成的牌局</strong>
+              <span id="resume-meta"></span>
+            </div>
+            <button id="btn-resume" class="primary" type="button">继续</button>
+          </div>
+        </div>
 
-  <p id="msg" class="msg" role="status" aria-live="polite"></p>
+        <div class="col">
+          <h3 class="col-title">纪录（同档比：先看提示几次，再看动数，最后看时间）</h3>
+          <ul id="record-list" class="records"></ul>
 
-  <div id="overlay" class="overlay" hidden>
-    <section id="ov-title" class="panel">
-      <h2>ヘルゴルフ<span class="latin">HERUGOLF</span></h2>
-      <p class="lede">Nikoli 的「逻辑高尔夫」。盘面只给三种东西：带数字的球、H（球洞）、池。</p>
-      <ol class="rules">
-        <li><b>R1</b> 每颗球都走进一个 H，每个 H 恰好落一球。</li>
-        <li><b>R2</b> 每动一次沿上下左右走「球里的数字」那么多个格，走完减 1 ⇒ 动长严格 <i>k, k−1, …</i>。</li>
-        <li><b>R3</b> 线不许穿过别的球、不许穿过 H（停在上面不算）、不许自交；线两两不许交叉或重叠。</li>
-        <li><b>R4</b> 不许出界；不许<b>停在</b>池上，但<b>可以穿过</b>。</li>
-      </ol>
-      <p class="howto">点一颗球选中它，再点目标格（或直接滑动一个方向）走一动；<b>U</b> 撤销那一动。出货的每一盘都由独立计数器数过唯一解、由铅笔零猜测推到底。</p>
-      <div class="panelrow">
-        <button id="btn-continue" class="hudbtn" type="button">继续存档</button>
-        <button id="btn-close" class="hudbtn" type="button">开始玩 Enter</button>
+          <h3 class="col-title">你会用到的五条命名规则</h3>
+          <ol class="rules" id="rule-list"></ol>
+          <p class="rules-note">提示用的就是这五条（<code>js/engine/pencil.js</code>）：它说出的每一步，都是题面的线索推得出的。</p>
+        </div>
       </div>
     </section>
-    <section id="ov-help" class="panel" hidden>
-      <h2>玩法与键位</h2>
-      <ol class="rules">
-        <li><b>R1</b> 一球一洞：所有球进 H，每个 H 只落一球。</li>
-        <li><b>R2</b> 一动比一动短：<i>k, k−1, k−2, …</i>，方向每动可换。</li>
-        <li><b>R3</b> 每格最多被一条线通过：不许穿球、穿 H、自交、互交。</li>
-        <li><b>R4</b> 不出界；可穿池，不可停池。</li>
-      </ol>
-      <table class="keys">
-        <caption>键位</caption>
-        <tbody>
-          <tr><th>Enter / Space</th><td>开局；赢了则下一局（不参与暂停）</td></tr>
-          <tr><th>P</th><td>暂停 / 继续（暂停期间仿真一步都不推进）</td></tr>
-          <tr><th>R</th><td>重开本盘（时钟、粒子、玩家线、撤销栈全复位）</td></tr>
-          <tr><th>N</th><td>下一局（seed 自增，不是按日期抽）</td></tr>
-          <tr><th>U</th><td>撤销上一动</td></tr>
-          <tr><th>G</th><td>提示：拿铅笔那条「单走法」，不替你画答案</td></tr>
-          <tr><th>M</th><td>静音（真 suspend AudioContext，静音态不再建振荡器）</td></tr>
-          <tr><th>F</th><td>全屏</td></tr>
-          <tr><th>H / ?</th><td>本卡</td></tr>
-        </tbody>
-      </table>
-      <div class="panelrow"><button id="btn-close-2" class="hudbtn" type="button" data-act="close">知道了</button></div>
+
+    <section id="view-game" class="view" hidden>
+      <div class="stage">
+        <div class="stage-head">
+          <span id="stat-name" class="puzzle-name">—</span>
+          <span id="stat-tier" class="chip">—</span>
+          <span id="stat-seed" class="chip mono">seed —</span>
+          <span id="stat-time" class="chip mono">00:00</span>
+        </div>
+        <div id="board-wrap">
+          <canvas id="board" tabindex="0" role="img" aria-label="ヘルゴルフ棋盘：点一颗球，再点它这一动要停的那一格"></canvas>
+          <div id="win-veil" hidden>
+            <div class="win-card">
+              <h3>每条线都收进洞了</h3>
+              <p id="win-meta"></p>
+              <p id="win-record" class="win-record"></p>
+              <div class="win-actions">
+                <button id="btn-again" class="primary" type="button">再来一局</button>
+                <button id="btn-menu-2" class="ghost" type="button">回选档</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p id="state-line" class="conflict-line" aria-live="polite"></p>
+      </div>
+
+      <aside class="panel">
+        <div class="acts">
+          <button id="btn-hint" class="primary" type="button">提示<span class="mono" id="hint-count">0</span></button>
+          <button id="btn-undo" class="ghost" type="button">撤销</button>
+          <button id="btn-restart" class="ghost" type="button" title="重开同一盘：把这一局的走线与账本清空回到开局，盘面不变（R）">重开本题</button>
+          <button id="btn-new" class="ghost" type="button">换一局</button>
+          <button id="btn-menu" class="ghost" type="button">回选档</button>
+        </div>
+
+        <div class="stats">
+          <div class="stat"><span>动数</span><b id="stat-strokes" class="mono">0</b></div>
+          <div class="stat"><span>提示</span><b id="stat-hints" class="mono">0</b></div>
+          <div class="stat"><span>已进洞</span><b id="stat-indone" class="mono">0/0</b></div>
+          <div class="stat"><span>未进洞的球</span><b id="stat-remaining" class="mono">0</b></div>
+          <div class="stat"><span>线占格</span><b id="stat-covered" class="mono">0/0</b></div>
+          <div class="stat"><span>复核不签</span><b id="stat-conflicts" class="mono">0</b></div>
+          <div class="stat"><span>推导步数实测</span><b id="stat-score" class="mono">—</b></div>
+          <div class="stat"><span>这一局出题耗时</span><b id="stat-genms" class="mono">—</b></div>
+        </div>
+
+        <div class="hint-box">
+          <h4 id="hint-rule">提示理由</h4>
+          <p id="hint-line">按 <b>提示</b>（或 <b>H</b> 键）会说出当前推得出的那一步，以及它依据哪条命名规则。</p>
+        </div>
+
+        <div class="legend">
+          <span><i class="sw sw-ball"></i>球（数字 = 第一动走几格）</span>
+          <span><i class="sw sw-hole"></i>H 球洞</span>
+          <span><i class="sw sw-pond"></i>池（可穿过，不许停）</span>
+          <span><i class="sw sw-route"></i>已画的线</span>
+          <span><i class="sw sw-target"></i>这一动的合法落点（圈里的数 = 走几格）</span>
+        </div>
+        <p class="keyhint"><b>点击/触屏</b> 点球选球 · 点格落子 · <b>方向键</b> 把选中的球往那个方向开一动 · <b>空格</b> 换下一颗球 · <b>H</b> 提示 · <b>退格</b>／<b>Z</b> 撤销</p>
+      </aside>
     </section>
-  </div>
+  </main>
+
+  <footer class="foot">
+    <span>每盘唯一解 · 每盘可用命名规则推到底 · 提示只给推得出的一步 · 同一 seed 同一档出同一张盘 — 由 <code>tools/playtest.cjs</code>（headless Chrome/CDP 真事件）在真实浏览器里逐条断言。</span>
+    <button id="btn-reset" class="link" type="button">清空存档</button>
+  </footer>
 </div>
 
-<script src="js/bundle/herugolf.js"></script>
+<script type="module" src="js/main.js"></script>
+  <script src="js/sw-register.js"></script>
 </body>
 </html>

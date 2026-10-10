@@ -1,222 +1,697 @@
-// 引导层：把 core（无 DOM）+ render + ui 接起来，跑 rAF，管资产与 service worker。
+// 接线层：DOM、指针 + 键盘输入、计时、存档，以及闸要的 window.herugolf 面。
+// 这一层一条规则都不判 —— 盘面上的每个判断都来自 js/engine/（经 js/ui/game.js）。
 //
-// 三条不是可有可无的口径：
-//   · 窗口状态挂出去（window.Herugolf / window.HerugolfState）：任何探针读不到状态的仓，
-//     判据都无法复验 —— 那一行"结论：无法比对"就是这么来的。
-//   · file:// 下整段跳过 SW 注册且不抛未捕获异常（本仓的产物要能被双击打开）。
-//   · 帧 dt 只喂给 game.update()，渲染层不参与推进仿真；暂停时 update 直接返回 0 步。
-import { HerugolfGame, SIM_DT, SIM_STEP_MS } from './core/game.js';
-import { Renderer } from './render/board.js';
-import { createHud } from './ui/hud.js';
-import { Sfx } from './core/audio.js';
-import { loadStore, writeStore, upsertRun, recordWin, SAVE_KEY } from './core/save.js';
+// 默认 seed 取自存档里的自增游标，绝不取 Date.now()：页面上印着 "seed 7" 就必须能用
+// 同一个 7 + 同一档重新出同一张盘。闸里那条断言量的是这个（见 tools/scenarios.js 的 play 段）。
+import { applyThemeVars, setReduceMotion, systemPrefersReducedMotion, Palette } from './theme.js';
+import { Sound } from './audio/synth.js';
+import { Store, STORAGE_KEY } from './store.js';
+import * as Grid from './engine/grid.js';
+import * as Pencil from './engine/pencil.js';
+import { countSolutions, answerOf, DEFAULT_BUDGET_NODES } from './engine/counter.js';
+import { TIERS, parseTier, shipPuzzle } from './engine/generate.js';
+import { routesFor } from './engine/routes.js';
+import { verify } from './engine/verify.js';
+import { Game, MENU, tierOf, ship, certify, nextDeduction, nowMs } from './ui/game.js';
+import { BoardView } from './render/board.js';
 
-const ART = [
-  ['paper', 'web/img/paper-256.png'],
-  ['pond', 'web/img/pond-128.png'],
-  ['ball', 'web/img/ball-96.png'],
-  ['hole', 'web/img/hole-96.png'],
-  ['particles', 'web/img/particles-128.png'],
-];
+const VERSION = '1.0.0';
+// 每个文档一个身份：片段跳转不换文档，所以这个身份在 hash 导航后必须还在、真重载后必须消失。
+// 它是"续局这一腿跑在新文档里"的证人之一。
+const DOC = 'doc' + Math.random().toString(36).slice(2, 10);
 
-export function boot(doc, win) {
-  const now = () => (win.performance && win.performance.now ? win.performance.now() : 0);
-  // 存档介质：boot 时做一次**写入回读探针**，不是"拿到对象就当它能用"。
-  // 隐私模式里 getItem 好使、setItem 才抛；有些宿主给的对象 getItem 恒返回 null ——
-  // 这两种都只有真写过一次才知道。探针失败就退回内存档继续跑（不拦开局），事实挂到 window 上。
-  const PROBE_KEY = SAVE_KEY + ':probe';
-  let storageReport = 'ok';
-  const storage = (() => {
-    try {
-      if (!win.localStorage) return null;
-      win.localStorage.setItem(PROBE_KEY, '1');
-      if (win.localStorage.getItem(PROBE_KEY) !== '1') { storageReport = 'read-back-mismatch'; return null; }
-      win.localStorage.removeItem(PROBE_KEY);
-      return win.localStorage;
-    } catch (e) {
-      storageReport = 'unavailable:' + (e && e.name ? e.name : e);
-      return null;
+const $ = (sel) => document.querySelector(sel);
+const el = {
+  viewMenu: $('#view-menu'),
+  viewGame: $('#view-game'),
+  tiers: $('#tier-list'),
+  rules: $('#rule-list'),
+  records: $('#record-list'),
+  resumeCard: $('#resume-card'),
+  resumeName: $('#resume-name'),
+  resumeMeta: $('#resume-meta'),
+  name: $('#stat-name'),
+  tier: $('#stat-tier'),
+  seed: $('#stat-seed'),
+  time: $('#stat-time'),
+  strokes: $('#stat-strokes'),
+  hints: $('#stat-hints'),
+  indone: $('#stat-indone'),
+  remaining: $('#stat-remaining'),
+  covered: $('#stat-covered'),
+  conflicts: $('#stat-conflicts'),
+  score: $('#stat-score'),
+  genms: $('#stat-genms'),
+  hintRule: $('#hint-rule'),
+  hintLine: $('#hint-line'),
+  hintCount: $('#hint-count'),
+  stateLine: $('#state-line'),
+  winVeil: $('#win-veil'),
+  winMeta: $('#win-meta'),
+  winRecord: $('#win-record'),
+  wrap: $('#board-wrap'),
+  canvas: $('#board'),
+};
+
+const store = new Store();
+const sound = new Sound(() => store.get('sound'));
+const view = new BoardView(el.canvas);
+let game = null;
+let startedAt = 0;
+let baseElapsed = 0;
+let ticker = null;
+
+// ---- 键盘到达数：仓里 known flake 是"同一个键盘计数在同样的跑法里读到 0/2/7"，
+// 所以这里把派发口径写死成一份可被闸读回的账（seen/handled/repeated/逐键）。
+const keys = { seen: 0, handled: 0, repeated: 0, by: {} };
+
+const elapsedMs = () => baseElapsed + (nowMs() - startedAt);
+const fmtTime = (ms) => {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+};
+
+function sync() {
+  if (!game) return;
+  const g = game;
+  el.name.textContent = `${g.tier} · ${g.board.w}×${g.board.h} · ${g.balls.length} 球`;
+  el.tier.textContent = g.tier;
+  el.seed.textContent = `seed ${g.seed}`;
+  el.strokes.textContent = String(g.strokeCount);
+  el.hints.textContent = String(g.hints);
+  el.hintCount.textContent = String(g.hints);
+  el.indone.textContent = `${g.doneCount()}/${g.balls.length}`;
+  el.remaining.textContent = String(g.balls.length - g.doneCount());
+  el.covered.textContent = `${g.own.size}/${g.n}`;
+  el.conflicts.textContent = String((g.winErrors || []).length);
+  el.score.textContent = g.pencil ? `${g.pencil.steps} 步 · 加权 ${g.pencil.score}` : '—';
+  el.genms.textContent = `${g.genMs.toFixed(2)} ms / ${g.attempts || 1} 次尝试`;
+  el.stateLine.textContent = g.msg.text;
+  el.stateLine.className = `conflict-line ${g.msg.kind}`;
+  el.hintRule.textContent = g.lastHint ? `规则：${g.lastHint.rule}` : '提示理由';
+  if (g.lastHint) el.hintLine.textContent = g.lastHint.line;
+  el.winVeil.hidden = g.status !== 'won';
+  if (g.status === 'won') {
+    el.winMeta.textContent = `${g.tier} · ${g.strokeCount} 动 · 提示 ${g.hints} 次 · ${fmtTime(elapsedMs())}`;
+    // 赢的那一刻记一次档：菜单页那张「纪录（同档比）」的表、和这张卡上的纪录那一行，
+    // 吃的都是 store.data.best —— 原来 record() 一个调用者都没有，于是纪录永远是「—」，
+    // 而界面上照样印着那句标题（写了不许有，是文档在替树撒谎）。
+    if (!g.recorded) {
+      g.recorded = true;
+      const res = store.record(g.tier, { strokes: g.strokeCount, hints: g.hints, ms: Math.round(elapsedMs()) });
+      const best = res.best;
+      el.winRecord.textContent = res.improved
+        ? `新纪录：${g.tier} 提示 ${best.hints} 次 · ${best.strokes} 动 · ${fmtTime(best.ms)}（累计通关 ${store.data.totals.solved} 盘）`
+        : `${g.tier} 的纪录还是那份更好的：提示 ${best.hints} 次 · ${best.strokes} 动 · ${fmtTime(best.ms)}（这一局没刷掉它）`;
     }
-  })();
+  }
+  view.draw();
+}
 
-  const store = loadStore(storage);
-  const mq = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  const reduced = !!(mq && mq.matches);
+function tick() {
+  if (!game) return;
+  el.time.textContent = fmtTime(elapsedMs());
+}
 
-  const game = new HerugolfGame({ seed: 7, tierKey: store.store.prefs.tier, reduceMotion: reduced, clock: now });
-  const canvas = doc.getElementById('board');
-  const renderer = new Renderer(canvas);
-  const sfx = new Sfx(win.AudioContext || win.webkitAudioContext || null);
-  if (store.store.prefs.muted) sfx.setMuted(true);
+function persist() {
+  if (!game) return;
+  store.putResume({
+    tier: game.tier,
+    seed: game.seed,
+    cells: game.codes(),
+    strokes: game.strokeCount,
+    hints: game.hints,
+    elapsedMs: Math.round(elapsedMs()),
+    savedAt: Date.now(),
+  });
+}
 
-  const wrap = doc.getElementById('boardwrap');
-  const viewSize = () => {
-    const rect = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect() : null;
-    const w = (rect && rect.width) || win.innerWidth || 960;
-    const h = (rect && rect.height) || win.innerHeight || 700;
-    return [w, h];
-  };
-  const relayout = () => {
-    const [w, h] = viewSize();
-    renderer.resize(w, h, game.board);
-  };
+// ---------- 开局 ----------
 
-  const out = {};
-  const save = () => {
-    const snap = game.snapshot();
-    upsertRun(store.store, snap);
-    if (game.state === 'won') recordWin(store.store, snap);
-    const r = writeStore(storage, store.store);
-    out.lastWrite = r;
-    return r;
-  };
+function begin({ tier = MENU[0].key, seed = null } = {}) {
+  const t = tierOf(tier) ? tier : MENU[0].key;
+  const s = Number.isInteger(seed) && seed > 0 ? seed : store.takeSeed();
+  const p = ship(s, t);
+  if (!p.ok) {
+    // 出货通道的账：tries 用尽没出货。界面不许自己造一盘"看起来像"的题面顶上。
+    say(`这一档这一次没出货（${p.status}，试了 ${p.attempts} 次）。换一档或按「换一局」重铺。`);
+    return null;
+  }
+  game = new Game(p);
+  startedAt = nowMs();
+  baseElapsed = 0;
+  game.msg = { kind: 'idle', rule: '', text: `球 ${game.selected} 已经选中：这一动正好走 ${game.needOf(game.selected)} 格。蓝圈是它够得着的落点。` };
+  // 先让容器可见，再量它：#view-game 还 hidden 时 wrap.clientWidth 是 0，
+  // layout() 会退到最小格边长（整盘画成 200px），而玩家第一次看到的就那张小盘，
+  // 下一次 layout()（换一局/resize）又把下面所有控件往下推 —— 坐标全漂。
+  showGame();
+  view.layout(game);
+  sync();
+  persist();
+  startTicker();
+  return game;
+}
 
-  const hud = createHud({ doc, win, game, renderer, sfx, store, onSave: save, onAudio: null });
-  hud.resumeRun = () => {
-    const run = store.store.runs[0];
-    if (!run) { hud.say('没有可继续的存档'); return false; }
-    game.restore(run);
-    hud.say('继续存档：seed ' + run.seed + ' · ' + run.tier);
-    relayout();
+// 重开：**同一道题**从头再来 —— 走线、撤销栈、落笔数、选中的球、提示次数、计时、结算遮罩
+// 全部归零，但不换题。跟「换一局」的分工：换一局是重铺一道新盘（那是"再来一局"），
+// 这里是"这盘我走错了，原地重来"——玩家要的是同一张盘。
+//
+// 特意不走 begin()：那一条的第一件事是 ship(seed, tier) 重铺题面，等于把题也换了。
+// 本仓玩家画的那一笔一笔全在 UI 层（引擎侧是纯题面数据），所以复位就是点名 UI 那一层，
+// 详见 Game.resetAll 的注释。
+function restart() {
+  if (!game) return null;
+  game.resetAll();               // 走线 + hist + strokeCount + selected + hints + status + msg + lastHint + own
+  el.winVeil.hidden = true;      // 结算遮罩收起：上一局赢了的遮罩不能压在重开后的盘上
+  baseElapsed = 0;               // 耗时归零
+  // 暂停中重开就保持停表，否则 startTicker() 会把暂停期间憋下的墙钟一次性灌进计时。
+  if (paused) {
+    startedAt = 0;
+    if (ticker) clearInterval(ticker);
+    ticker = null;
+  } else {
+    startTicker();               // 没暂停就重新起跑，重开后的计时是这一局自己的
+  }
+  game.msg = { kind: 'idle', rule: '', text: `球 ${game.selected} 已经选中：这一动正好走 ${game.needOf(game.selected)} 格。蓝圈是它够得着的落点。` };
+  showGame();
+  sync();
+  persist();                     // 存档覆盖成本局的空盘：刷新页面不会又冒出走错那半局
+  return game;
+}
+
+function resumeSaved() {
+  const r = store.resume(tierOf);
+  if (!r) return null;
+  const p = ship(r.seed, r.tier);
+  if (!p.ok) return null;
+  const g = new Game(p);
+  const { applied, refused } = g.setCodes(r.cells);
+  // refused<0 = 那串根本读不出格式；refused>0 = 一半落不下去。两种都判"续不上"，
+  // 而不是把半截盘画出来 —— 半截盘看起来就像正常在局，玩家分不清。
+  if (refused < 0 || refused > 0) return null;
+  game = g;
+  game.hints = Number.isInteger(r.hints) ? r.hints : 0;
+  startedAt = nowMs();
+  baseElapsed = Number.isInteger(r.elapsedMs) && r.elapsedMs > 0 ? r.elapsedMs : 0;
+  showGame();
+  // 续局这一腿原来只调 sync()（= view.draw()），而 view.game 在"从菜单直接续局"时
+  // 从来没被 layout() 设过 —— draw() 第一行的 `if (!g) return` 直接收工，
+  // 于是玩家按「继续」看到的是一张 300×150 的空画布：档续上了，盘却整个不画。
+  view.layout(game);
+  sync();
+  startTicker();
+  return { game, applied, refused };
+}
+
+function startTicker() {
+  paused = false;   // 新开局/恢复都从这里起算：闸门先开，再让 ticker 跑
+  if (ticker) clearInterval(ticker);
+  ticker = setInterval(tick, 250);
+  tick();
+}
+
+function say(text) {
+  el.stateLine.textContent = text;
+  el.stateLine.className = 'conflict-line deny';
+}
+
+function showGame() {
+  el.viewMenu.hidden = true;
+  el.viewGame.hidden = false;
+  el.canvas.focus({ preventScroll: true });
+}
+
+function showMenu() {
+  persist();
+  el.viewGame.hidden = true;
+  el.viewMenu.hidden = false;
+  renderMenu();
+}
+
+// ---------- 输入 ----------
+
+// 指针与键盘都收敛到"落一步 + 同一套副作用"这一个出口。场景腿写格子走的也是它 ——
+// 于是"页内写"与"真事件"落进的是同一个状态机，不会各测各的。
+function settle(before, msg) {
+  if (!game) return msg;
+  if (game.strokeCount > before) sound.play(game.inHole(game.selected) ? 'hole' : 'stroke');
+  else if (msg && msg.kind === 'deny') sound.play('deny');
+  sync();
+  tick();
+  persist();
+  return msg;
+}
+
+function clickCell(cell) {
+  if (!game || cell < 0) return null;
+  const before = game.strokeCount;
+  return settle(before, game.tap(cell));
+}
+
+// 方向键给的是 (行,列)：出界的照递 —— "开出盘外"必须报 R4，不许在界面上被吞掉
+function keyRC(r, c) {
+  if (!game) return null;
+  const before = game.strokeCount;
+  return settle(before, game.tapRC(r, c));
+}
+
+function pressKey(e) {
+  if (!game) return false;
+  const k = e.key;
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) {
+    const dir = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[k];
+    const at = game.tipOf(game.selected);
+    const [r, c] = game.board.rc(at);
+    // 距离由球里的数字定死（R2），所以一个方向键就是一次完整落子，不需要"先瞄准再确认"
+    const d = game.needOf(game.selected);
+    keyRC(r + dir[0] * d, c + dir[1] * d);
+    e.preventDefault();
     return true;
-  };
-  hud.bind();
-
-  // 有存档就把最近一局端上来（不是只写不读的装饰性 localStorage 键）
-  if (store.store.runs.length) {
-    const run = store.store.runs[0];
-    game.restore(run);
-    hud.say('已继续上一局（seed ' + run.seed + ' · ' + run.tier + '）');
   }
-  if (store.store.prefs.muted) {
-    hud.ui.mute.setAttribute('aria-pressed', 'true');
-    hud.ui.mute.textContent = '音效 关';
+  if (k === ' ') {
+    const list = game.balls;
+    const at = list.indexOf(game.selected);
+    clickCell(list[(at + 1) % list.length]);
+    e.preventDefault();
+    return true;
   }
-  relayout();
-  hud.openOverlay('title');
-  hud.sync();
-
-  const loaded = {};
-  if (typeof win.Image === 'function') {
-    for (const [key, src] of ART) {
-      const img = new win.Image();
-      loaded[key] = img;
-      img.onload = () => renderer.setArt(loaded);
-      img.src = src;
-    }
+  if (k === 'Backspace' || k === 'z' || k === 'Z') {
+    game.undo();
+    sound.play('stroke');
+    sync();
+    persist();
+    e.preventDefault();
+    return true;
   }
-
-  if (mq) {
-    const onMq = () => game.setReduceMotion(!!mq.matches);
-    if (mq.addEventListener) mq.addEventListener('change', onMq);
-    else if (mq.addListener) mq.addListener(onMq);
+  if (k === 'h' || k === 'H') {
+    useHint();
+    e.preventDefault();
+    return true;
   }
-  if (win.addEventListener) {
-    win.addEventListener('resize', relayout);
-    win.addEventListener('orientationchange', relayout);
+  // R 重开同一题，**局中就能按**（不只结算后）：玩家画到一半发现这盘走不通，当场 R 一下。
+  // 本仓原先没有任何键占着 R（空格换选球，⌫/Z 撤销，H 提示，方向键走格，M 静音，P 暂停），
+  // 所以不需要换键。
+  if (k === 'r' || k === 'R') {
+    restart();
+    e.preventDefault();
+    return true;
   }
-
-  // 上一段动完就落一次档；win 也落（win 走 save 里的 recordWin）
-  let lastState = game.state;
-  let lastMoves = game.moves;
-  let frames = 0;
-  // 仿真位置不在这里算：core 用同一只钟（performance.now）配时间账本自己决定这一帧能推进到
-  // 哪个虚拟时刻。帧回调的 t 只是"第几帧被打断"的信息，拿它当计时器 = 把刷新率漏进仿真。
-  const frame = () => {
-    game.update();
-    if (game.events.length) {
-      // 玩法声音只在这一处响：处理器里再按返回值补一次 = blocked 响两下（实测口径）。
-      for (const e of game.events) {
-        if (e === 'stroke') sfx.blip('stroke');
-        else if (e === 'undo') sfx.blip('ui');
-        else if (e === 'hole') sfx.blip('hole');
-        else if (e === 'win') sfx.blip('win');
-        else if (e === 'blocked') sfx.blip('blocked');
-      }
-      game.events.length = 0;
-    }
-    if (game.state !== lastState || game.moves !== lastMoves) {
-      lastState = game.state;
-      lastMoves = game.moves;
-      save();
-      hud.sync();
-    }
-    renderer.draw(game);
-    frames++;
-    if (win.requestAnimationFrame) win.requestAnimationFrame(frame);
-  };
-
-  // 探针/对拍读的就是这一份，而且它是**活视图**（getter 转发），不是每 8 帧抄一次的快照。
-  // 抄那份是实测出来的坑：官方尺子按完按钮的同一刻就读状态，中间不推进帧 ——
-  // 活对象说 playing、抄本还说 title，于是三档各自走上不同的注入路径（seed 7 vs 8 就是这么来的）。
-  const view = () => game.inspect();
-  const published = {};
-  const expose = (k) => Object.defineProperty(published, k, { enumerable: true, get: () => view()[k] });
-  for (const k of Object.keys(view())) expose(k);
-  const exposeAt = (k, get) => Object.defineProperty(published, k, { enumerable: true, get });
-  exposeAt('audio', () => sfx.state());
-  exposeAt('art', () => Object.keys(loaded).length);
-  exposeAt('storage', () => storageReport);
-  exposeAt('lastWrite', () => (out.lastWrite ? out.lastWrite.ok : false));
-  // 帧计数**不**进这份视图：它按定义随刷新率变化（30/60/120 各 90/180/360），挂在状态面上
-  // 等于让"跨档可比"这件事自己红一条 —— 要看它在 api.frames() 上。
-  // 粒子真值是共享数组（就地改写），直接挂引用
-  published.pX = game.pX;
-  published.pY = game.pY;
-  published.pVX = game.pVX;
-  published.pVY = game.pVY;
-  published.pLife = game.pLife;
-  published.pKind = game.pKind;
-  const publish = () => published;
-
-  const api = {
-    game, renderer, hud, sfx, store, sfxState: () => sfx.state(),
-    state: published,
-    start: () => { hud.act('start'); return game.state; },
-    startLevel: (seed, tier) => {
-      if (seed != null || tier != null) game.build(seed == null ? game.seed : Number(seed), tier || game.tierKey);
-      game.state = 'playing';
-      relayout();
-      hud.sync();
-      return game.state;
-    },
-    pause: () => { game.pause(); sfx.suspendForPause(); return game.state; },
-    resume: () => { game.resume(); sfx.resumeFromPause(); return game.state; },
-    reset: () => { game.reset(true); relayout(); return game.state; },
-    saveKey: SAVE_KEY,
-    simDt: SIM_DT,
-    simStepMs: SIM_STEP_MS,
-    publish,
-  };
-
-  Object.assign(out, { game, renderer, hud, sfx, store, api, frames: () => frames, published });
-  win.Herugolf = api;
-  win.HerugolfState = published;
-  win.game = api;
-
-  if (win.requestAnimationFrame) win.requestAnimationFrame(frame);
-
-  // SW：file:// 下整段跳过（那条路径下注册必然抛，且抛在玩家第一次双击 index.html 的时候）
-  const isFile = win.location && win.location.protocol === 'file:';
-  if (!isFile && 'serviceWorker' in (win.navigator || {})) {
-    try {
-      const reg = win.navigator.serviceWorker.register('sw.js');
-      if (reg && reg.catch) reg.catch(() => { out.swError = 'register-rejected'; });
-    } catch (e) {
-      out.swError = e && e.name ? e.name : 'register-failed';
-    }
-  } else {
-    out.swSkipped = isFile ? 'file://' : 'no-sw-api';
-  }
-
-  return out;
+  return false;
 }
 
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  const start = () => { window.__herugolf = boot(document, window); };
-  if (document.readyState === 'loading' && document.addEventListener) {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    start();
+function useHint() {
+  if (!game) return null;
+  const info = game.hint();
+  sync();
+  tick();
+  persist();
+  return info;
+}
+
+el.canvas.addEventListener('pointerdown', (e) => {
+  if (!game) return;
+  e.preventDefault();
+  el.canvas.focus({ preventScroll: true });
+  clickCell(view.cellAt(e.clientX, e.clientY));
+});
+el.canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (game && game.selected !== null) {
+    game.popAll(game.selected);
+    sync();
+    persist();
+  }
+});
+document.addEventListener(
+  'keydown',
+  (e) => {
+    keys.seen++;
+    keys.by[e.key] = (keys.by[e.key] || 0) + 1;
+    if (e.repeat) keys.repeated++;
+    // 焦点在按钮上时键盘属于那个按钮（空格/回车就是它的激活键），不许同时再驱动棋盘
+    const onButton = e.target && e.target.tagName === 'BUTTON';
+    if (!onButton && pressKey(e)) keys.handled++;
+  },
+  true
+);
+
+// 按钮
+$('#btn-hint').addEventListener('click', useHint);
+$('#btn-restart').addEventListener('click', restart);
+$('#btn-undo').addEventListener('click', () => {
+  if (!game) return;
+  game.undo();
+  sync();
+  persist();
+});
+$('#btn-new').addEventListener('click', () => begin({ tier: game ? game.tier : MENU[0].key }));
+$('#btn-menu').addEventListener('click', showMenu);
+$('#btn-menu-2').addEventListener('click', showMenu);
+$('#btn-again').addEventListener('click', () => begin({ tier: game ? game.tier : MENU[0].key }));
+$('#btn-resume').addEventListener('click', () => {
+  const r = resumeSaved();
+  if (!r) say('续不上那份档（题面重出不来或存档读不出档位）。');
+});
+// ---- 静音开关 -----------------------------------------------------------------------
+// 控件状态、store 偏好、真静音（suspend AudioContext）三件事一起翻。
+// 真静音在 js/audio/synth.js 的 Sound.setMuted 里做，偏好由它落盘到 localStorage。
+$('#btn-sound').addEventListener('click', (e) => {
+  const on = !store.get('sound');
+  store.set('sound', on);
+  sound.setMuted(!on);
+  e.currentTarget.setAttribute('aria-pressed', String(on));
+  e.currentTarget.textContent = on ? '音效 开' : '音效 关';
+  if (on) sound.play('stroke');
+});
+
+// M 在本仓未被占用，走房规键位。这里只把按键翻译成"点一下音效按钮"。
+window.addEventListener('keydown', (ev) => {
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName || '')) return;
+  if (ev.key === 'm' || ev.key === 'M') {
+    ev.preventDefault();
+    $('#btn-sound').click();
+  }
+});
+$('#btn-motion').addEventListener('click', (e) => {
+  const on = !store.get('motion');
+  store.set('motion', on);
+  e.currentTarget.setAttribute('aria-pressed', String(on));
+  e.currentTarget.textContent = on ? '动效 全' : '动效 简';
+  setReduceMotion(!on);
+});
+$('#btn-reset').addEventListener('click', () => {
+  store.reset();
+  game = null;
+  renderMenu();
+  showMenu();
+  sync2();
+});
+
+function sync2() {
+  el.stateLine.textContent = '存档已清空：seed 游标回到 1，纪录与续局都从头开始。';
+  el.stateLine.className = 'conflict-line';
+}
+
+// ---------- 选档页 ----------
+
+function renderMenu() {
+  el.tiers.innerHTML = '';
+  for (const t of MENU) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tier';
+    b.id = `btn-tier-${t.key.replace('/', '-')}`;
+    b.innerHTML = `<b>${t.key}</b><span class="mono">${t.w}×${t.h} · ${t.balls} 球</span>`;
+    b.addEventListener('click', () => begin({ tier: t.key }));
+    el.tiers.appendChild(b);
+  }
+  el.records.innerHTML = '';
+  for (const t of MENU) {
+    const li = document.createElement('li');
+    const best = store.data.best[t.key];
+    li.innerHTML = `<span>${t.key}</span><span class="mono">${best ? `提示 ${best.hints} · ${best.strokes} 动 · ${fmtTime(best.ms)}` : '—'}</span>`;
+    el.records.appendChild(li);
+  }
+  const r = store.resume(tierOf);
+  el.resumeCard.hidden = !r;
+  if (r) {
+    el.resumeName.textContent = `未完成的 ${r.tier}`;
+    const lines = r.cells ? r.cells.split(';').filter(Boolean).length : 0;
+    el.resumeMeta.textContent = `seed ${r.seed} · ${lines} 条线 · 存档于 ${new Date(r.savedAt || Date.now()).toLocaleTimeString('zh-CN')}`;
   }
 }
+
+function renderRules() {
+  el.rules.innerHTML = '';
+  for (const name of Pencil.RULE_ORDER) {
+    const li = document.createElement('li');
+    li.textContent = Pencil.RULE_TEXT[name];
+    li.dataset.rule = name;
+    el.rules.appendChild(li);
+  }
+}
+
+// ---------- 深链：#t=10x10/5&s=7 ----------
+// 为什么走 hash 而不是 query：闸的"片段导航不算重载"那条腿要的就是同文档换 hash，
+// 而这一份深链在**开机时**读一次就够（换 hash 不重开一局，那是另一条腿断言的事）。
+function deepLink() {
+  const m = /[#&]t=([^&]+)(?:[#&]s=([0-9]+))?/.exec(location.hash || '');
+  if (!m) return null;
+  const tier = decodeURIComponent(m[1]);
+  if (!tierOf(tier)) return null;
+  return { tier, seed: m[2] ? Number(m[2]) : null };
+}
+
+function boot() {
+  applyThemeVars();
+  const motionOn = store.get('motion') !== false && !systemPrefersReducedMotion();
+  setReduceMotion(!motionOn);
+  $('#btn-motion').setAttribute('aria-pressed', String(motionOn));
+  $('#btn-motion').textContent = motionOn ? '动效 全' : '动效 简';
+  // 存档里是关声的，AudioContext 一开始就该是挂起的（重开一局不会自己弹回来）
+  sound.syncFromStore();
+  $('#btn-sound').setAttribute('aria-pressed', String(store.get('sound')));
+  $('#btn-sound').textContent = store.get('sound') ? '音效 开' : '音效 关';
+  renderRules();
+  renderMenu();
+  const link = deepLink();
+  if (link) {
+    const g = begin({ tier: link.tier, seed: link.seed });
+    if (g) {
+      el.stateLine.textContent = `深链开局：${link.tier} · seed ${link.seed}`;
+      return;
+    }
+  }
+  if (!store.lastLoad.ok) say(`存档读不懂：${store.lastLoad.why}。已按"没有存档"继续。`);
+  showMenu();
+}
+
+addEventListener('pagehide', persist);
+addEventListener('resize', () => {
+  if (game && !el.viewGame.hidden) view.layout(game);
+});
+addEventListener('error', (e) => {
+  (window.__bootErrors || (window.__bootErrors = [])).push(String(e.message || e));
+});
+
+boot();
+
+// ---------- 闸要的这盘面 ----------
+window.herugolf = {
+  // 挂在窗口上是为了让探针能真的驱动一次重开、读 BEFORE/AFTER，而不必合成点击。
+  restart,
+  version: VERSION,
+  doc: DOC,
+  engine: {
+    Game,
+    TIERS,
+    parseTier,
+    tierOf,
+    ship,
+    shipPuzzle,
+    certify,
+    countSolutions,
+    answerOf,
+    DEFAULT_BUDGET_NODES,
+    verify,
+    routesFor,
+    nextDeduction,
+    Store: store,
+    STORAGE_KEY,
+    RULE_ORDER: Pencil.RULE_ORDER,
+    RULE_TEXT: Pencil.RULE_TEXT,
+    RULE_WEIGHT: Pencil.RULE_WEIGHT,
+    serializeBoard: Grid.serializeBoard,
+    parseBoard: Grid.parseBoard,
+    serializeAnswer: Grid.serializeAnswer,
+    parseAnswer: Grid.parseAnswer,
+    Board: Grid.Board,
+    DIRS: Grid.DIRS,
+  },
+  get game() {
+    return game;
+  },
+  view,
+  palette: Palette,
+  begin,
+  click: clickCell,
+  // 场景写格子用的那支笔：与指针落到同一个入口（先选球，再点落点）
+  write(ball, cell) {
+    if (!game) return null;
+    if (game.selected !== ball) game.tap(ball);
+    return clickCell(cell);
+  },
+  useHint,
+  undo: () => {
+    if (!game) return null;
+    game.undo();
+    sync();
+    persist();
+    return game.msg;
+  },
+  persistNow: persist,
+  state: () => ({
+    elapsedMs: game ? elapsedMs() : 0,
+    status: game ? game.status : 'menu',
+    strokes: game ? game.strokeCount : 0,
+    hints: game ? game.hints : 0,
+    covered: game ? game.own.size : 0,
+    remaining: game ? game.balls.length - game.doneCount() : 0,
+    doc: DOC,
+    seedCounter: store.peekSeed(),
+    bootErrors: (window.__bootErrors || []).length,
+  }),
+  keyHits: () => ({ seen: keys.seen, handled: keys.handled, repeated: keys.repeated, by: { ...keys.by } }),
+  showMenu,
+  showGame,
+};
+
+// ---- 全屏开关 ----
+//
+// 绑到 index.html 的 HUD 里真实存在的 #btn-fullscreen。
+// 只在 js 里留一串 requestFullscreen 能骗过字符串扫描，但按钮不在 DOM 里就是死代码：
+// 玩家按不到，功能等于没做。所以 id 必须与 HTML 里的按钮对得上，缺失时要在控制台喊出来。
+//
+// 三套 API 一律**特性探测**，不做 UA 判断：iPhone 版 Safari 压根没有元素全屏（只有 <video> 能全屏），
+// 老 Edge 只认 ms 前缀，Firefox 认 moz 前缀。UA 字符串是猜的，方法在不在是量的，猜错就静默失效。
+function fsRoot() {
+  return document.documentElement;
+}
+
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function fsRequest(root) {
+  // 老 Edge 的 msRequestFullscreen 挂在元素上，和标准名同一个位置，所以并排取即可。
+  return root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen || null;
+}
+
+// iOS Safari 会把非 video 元素的请求直接 reject 成 NotAllowedError。
+// 这个 promise 没人接就升级成 unhandledrejection，冒到 window.onerror——离屏预载时足以把整页判死。
+// 因此凡是可能返回 promise 的调用，返回值一律就地吞掉，绝不让拒绝逃出这一层。
+function fsQuiet(p) {
+  if (p && typeof p.catch === 'function') p.catch(() => {});
+  return p;
+}
+
+// 返回 true=请求进入，false=请求退出，null=不支持（调用方据此禁用按钮）。
+function toggleFullscreen(root) {
+  const req = fsRequest(root);
+  if (!req) return null;
+  if (fsElement()) {
+    // 退出侧同样要兜底：老 Edge 是 msExitFullscreen；万一三者皆无就当无事发生，不抛。
+    const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+    if (exit) fsQuiet(exit.call(document));
+    return false;
+  }
+  // 部分实现（如被 Permissions-Policy 挡住的 iframe）会同步抛，所以 catch 和 .catch 两头都要接。
+  try {
+    fsQuiet(req.call(root));
+  } catch (err) {
+    // 拒绝即降级：静默保持当前形态，不冒泡、不打断这一局的其余逻辑。
+  }
+  return true;
+}
+
+function bindFullscreen(btn) {
+  const root = fsRoot();
+
+  // 状态回写：Esc 和 iOS 下滑手势退出时不会经过按钮，
+  // 只有 fullscreenchange 事件能把按钮的文案/字形拉回正确状态，否则它会一直假装自己在全屏里。
+  const sync = () => {
+    const on = !!fsElement();
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = on ? "退出全屏" : "全屏";
+    btn.title = on ? "退出全屏 (F)" : "全屏 (F)";
+    document.body.classList.toggle('is-fullscreen', on);
+    return on;
+  };
+
+  if (!fsRequest(root)) {
+    // 不支持就要说明为什么：只把按钮变灰，玩家会以为这活根本没做完。
+    btn.disabled = true;
+    btn.setAttribute('aria-disabled', 'true');
+    btn.title = '这个浏览器不提供元素全屏（iOS Safari 请用「添加到主屏幕」）';
+    return;
+  }
+
+  btn.addEventListener('click', () => {
+    toggleFullscreen(root);
+    sync();
+  });
+
+  document.addEventListener('fullscreenchange', sync);
+  document.addEventListener('webkitfullscreenchange', sync);
+
+  window.addEventListener('keydown', (ev) => {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    // 正在输入框里打字时不劫持按键，否则会打不出 f。
+    if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName)) return;
+    if (ev.key === "f" || ev.key === "F") {
+      ev.preventDefault();
+      toggleFullscreen(root);
+      sync();
+    }
+  });
+
+  sync();
+}
+
+function bootFullscreen() {
+  const btn = document.getElementById("btn-fullscreen");
+  if (!btn) {
+    // 按钮被谁删掉了？在控制台喊出来，别让这个坑静默地烂在下一棒手里。
+    console.warn('[fullscreen] index.html 里找不到 #' + "btn-fullscreen" + '，全屏开关没有入口');
+    return;
+  }
+  bindFullscreen(btn);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootFullscreen);
+} else {
+  bootFullscreen();
+}
+
+// ---- 暂停：真的把仿真冻住 ----
+//
+// 本仓持续推进的仿真有两样，都归 elapsedMs 管：① 250ms 的 ticker 心跳（它每次把 elapsedMs()
+// 刷进 #stat-time）；② elapsedMs 本身 = baseElapsed + (nowMs() - startedAt)，跟着墙钟走。
+// setPaused(true)：baseElapsed 落账、startedAt 归 0、ticker 停 ⇒ elapsedMs() 之后恒等于
+// baseElapsed，墙钟再走多久都加不上去。
+// setPaused(false)：startedAt 重设成 nowMs() 再起 ticker ⇒ 恢复后的第一帧不会把暂停期间
+// 憋下的墙钟一次性灌进来（没有 dt 尖峰）。
+// 用 var 不用 let：本段在文件末尾，startTicker() 可能在它之前就被 begin() 调过，let 会 TDZ 抛。
+var paused = false;
+function setPaused(v) {
+  v = !!v;
+  if (v === paused) return paused;
+  if (v) {
+    baseElapsed = elapsedMs();
+    startedAt = 0;
+    if (ticker) clearInterval(ticker);
+    ticker = 0;
+  } else {
+    startedAt = nowMs();
+    startTicker();
+  }
+  paused = v;
+  var b = document.getElementById('btn-pause');
+  if (b) {
+    b.setAttribute('aria-pressed', String(paused));
+    b.textContent = paused ? '继续' : '暂停';
+    b.title = paused ? '继续 (P)' : '暂停 (P)';
+  }
+  return paused;
+}
+function togglePause() { return setPaused(!paused); }
+function isPaused() { return paused; }
+
+document.getElementById('btn-pause').addEventListener('click', togglePause);
+window.addEventListener('keydown', function (ev) {
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (ev.target && /input|textarea|select/i.test(ev.target.tagName)) return;
+  if (ev.key === 'p' || ev.key === 'P') { ev.preventDefault(); togglePause(); }
+});
