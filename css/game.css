@@ -482,7 +482,13 @@ button.link {
   }
 }
 
-body[data-motion='off'] * {
+/* 站内动效开关：主体是 <html>，因为 setReduceMotion() 写的是 documentElement.dataset.motion
+   （js/theme.js:56），而 <body> 上从来没有过 data-motion —— 原来这条写的是
+   body[data-motion='off']，一次也没命中过：站内「动效 简」按下去，CSS 这边什么都不停。
+   伪元素也一并收进来：* 不匹配 ::before/::after，它们各自的 animation 照样会跑。 */
+html[data-motion='off'] *,
+html[data-motion='off'] *::before,
+html[data-motion='off'] *::after {
   transition: none !important;
   animation: none !important;
 }
@@ -536,4 +542,17 @@ a[href],
 [role="button"] {
   min-height: 44px !important;
   min-width: 44px !important;
+}
+
+/* ---------- 系统偏好：prefers-reduced-motion（设计标准 §4 的 CSS 半） ----------
+   这一半不靠 JS：上面那条 data-motion 类名是 boot() 开机读一次系统偏好写下的**快照**
+   （js/main.js:448-449），系统偏好是运行中可改的，媒体查询当场跟着变；脚本还没跑起来时，
+   这一块也已经把动效按下去了。
+   本仓 CSS 里的动效只有 button 上那一条 0.15s 的 transition（css/game.css:89），
+   这条媒体查询把它连同将来新加的一起收掉。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
