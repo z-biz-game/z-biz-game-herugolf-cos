@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// 本地静态服务器（端口 5340，README 立项时查实空闲并预留的那两个号之一）。
+// 本地静态服务器（默认端口 5340；5341 是同号对里的备用号，用 argv 或 PORT 覆写）。
 //
-// 为什么要有它：这一版产物虽然是经典脚本（双击 file:// 也能玩），但 service worker 与
-// manifest 只在 http(s) 下生效；"可安装"这条判据要能被真人验一次，就得有个起得来的站点。
-// 它同时是 tools/verify 那一类浏览器闸的落脚点。
+// 为什么要有它：页面是 ES Module 壳，file:// 下浏览器拒绝加载模块；service worker 与
+// manifest 也只在 http(s) 下生效。要真人验一次"能开局、能装"，就得有个起得来的站点。
+// 它同时是 tools/playtest.cjs 那条浏览器腿的落脚点。
+//
+// 端口优先级：`node server.cjs 5341` > PORT=5341 > 默认 5340（README 的端口一节按这条写）。
 //
 // 三条安全边界（静态服务器最容易糊弄过去的就是这三条）：
 //   · 路径穿越：URL 段解码后必须仍在 ROOT 内，`..`、绝对路径、符号链接出仓一律 403。
@@ -14,7 +16,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = __dirname;
-const PORT = Number(process.env.PORT || 5340);
+const DEFAULT_PORT = 5340;
+const PORT = Number(process.argv[2]) || Number(process.env.PORT) || DEFAULT_PORT;
 const HOST = process.env.HOST || '127.0.0.1';
 
 const MIME = {

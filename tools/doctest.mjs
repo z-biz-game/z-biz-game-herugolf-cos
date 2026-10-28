@@ -70,16 +70,16 @@ ok(results.length === (totalLine ? +totalLine[7] + 1 : -1), `D1a 跑出来的 RE
   `${results.length} 行：${results.map(r => r.name).join(' ')}`);
 ok(results.length > 0 && results.every(r => r.green), 'D1b 被引用的这些条数出自一趟全绿的复跑（红行的条数不算现值）',
   results.filter(r => !r.green).map(r => r.name).join(' ') || `${results.length} 行全部 ok=true fails=0`);
-const resBlock = (DOC.match(/八行 RESULT\*\*：\n?`([^`]+)`/) || [])[1];
-ok(!!resBlock, 'D1c README 里那张「八行 RESULT」清单解析到了（解析不到就是表格/反引号改了形状）', resBlock ? `抓了 ${resBlock.split('/').length} 段` : '没有这一段');
+const resBlock = (DOC.match(/九行 RESULT\*\*：\n?`([^`]+)`/) || [])[1];
+ok(!!resBlock, 'D1c README 里那张「九行 RESULT」清单解析到了（解析不到就是表格/反引号改了形状）', resBlock ? `抓了 ${resBlock.split('/').length} 段` : '没有这一段');
 const docCounts = resBlock ? [...resBlock.matchAll(/([a-z0-9][a-z0-9-]*) (\d+)/g)].map(m => ({ name: m[1], n: +m[2] })) : [];
 ok(docCounts.length === results.length, `D1d 那张清单解析到 ${results.length} 个「套件 条数」对`, `解析 ${docCounts.length} 对`);
 for (const d of docCounts) ok(byName[d.name] === d.n, `D1 ${d.name} 文档写 ${d.n} 条 == 总门跑出来的 ${byName[d.name] ?? '（没有这一套）'}`,
   byName[d.name] === undefined ? `套件 ${d.name} 不在清单里` : `文档 ${d.n} vs 运行时 ${byName[d.name]}`);
-const eightCn = DOC.match(/(?:交出|是)八行 RESULT/);
-ok(!!eightCn && results.length === 8, 'D1e 文档说「八行 RESULT」，就跑出八行（中文数词也是现值）', `跑成 ${results.length} 行`);
-const gateSentence = DOC.match(/（三道静态门 \+ 七套逻辑 RESULT 行，另加总门自己那一行）/);
-ok(!!gateSentence && results.length === 8, 'D1f 「三道静态门 + 七套逻辑 + 总门自己那一行」加起来就是那八行',
+const nineCn = DOC.match(/(?:交出|是)九行 RESULT/);
+ok(!!nineCn && results.length === 9, 'D1e 文档说「九行 RESULT」，就跑出九行（中文数词也是现值）', `跑成 ${results.length} 行`);
+const gateSentence = DOC.match(/（三道静态门 \+ 八套逻辑 RESULT 行，另加总门自己那一行）/);
+ok(!!gateSentence && results.length === 9, 'D1f 「三道静态门 + 八套逻辑 + 总门自己那一行」加起来就是那九行',
   gateSentence ? `${results.length - 1} 套逻辑 + 1 总门` : '解析不到那句');
 
 // ---- D2 承诺表：每行的「N 条断言」必须等于该行点名的那套闸的现值 ----
@@ -287,8 +287,8 @@ ok(atUses >= 10 && /格号全部由 `OFFICIAL\.at\(r,c\)` 现算，没有一个�
   `D10c 「格号全部由 OFFICIAL.at(r,c) 现算」有代码作证（scenarios.js 里 ${atUses} 处调用）`, `at() ${atUses} 处 · 题面字面量 ${handIdx.length} 段`);
 
 // ---- D11 端口：文档 == server.cjs / playtest.cjs 的现值（5341 只在文档里 → 见 UNPINNED）----
-const serverPort = +(SERVER.match(/const PORT = (\d+);/) || [])[1];
-const argvOverride = /Number\(process\.argv\[2\]\) \|\| Number\(process\.env\.PORT\) \|\| PORT/.test(SERVER);
+const serverPort = +(SERVER.match(/const DEFAULT_PORT = (\d+);/) || [])[1];
+const argvOverride = /const PORT = Number\(process\.argv\[2\]\) \|\| Number\(process\.env\.PORT\) \|\| DEFAULT_PORT;/.test(SERVER);
 const cdpDoc = +(DOC.match(/CDP 口 (\d+)（`tools\/playtest\.cjs` 的默认值/) || [])[1];
 const cdpCode = +(PLAY.match(/CDP_PORT \|\| (\d+)/) || [])[1];
 const baseCode = +(PLAY.match(/BASE_URL \|\| 'http:\/\/127\.0\.0\.1:(\d+)\//) || [])[1];
@@ -415,9 +415,9 @@ const UNPINNED = [
   ['U7', '尺寸轴的 nodes p95', '计数器 nodes 的 p95 只从 11 走到 16', 'balance 200 盘读数；本仓复跑同批 seed 读到 11（8x8/5）→ 16（18x18/5），但分母必须一起走'],
   ['U8', '立项探针 20x20·14 球', '唯一出货 15/40', '桌面筛阶段的探针在 workspace 根（_tmp-herugolf-model/counter/gen/pencil.mjs），不在仓里、clone 不到 ⇒ 没有代码出处'],
   ['U9', '最慢一张出货的墙钟', '最慢一张出货 16.96ms', '墙钟绝对值是本机争用的影子；文档自己写明不进可复现那一类'],
-  ['U10', '鼠标腿断言数', '28 条断言 fail=0', '要真 Chrome + 本机服务器；playtest 的腿不在 npm test 里'],
-  ['U11', '触屏腿断言数', '31 条断言 fail=0', '同上'],
-  ['U12', '键盘腿断言数', '21 条断言 fail=0', '同上'],
+  ['U10', '鼠标腿断言数', '31 条断言 fail=0：100 格', '要真 Chrome + 本机服务器；playtest 的腿不在 npm test 里'],
+  ['U11', '触屏腿断言数', '32 条断言 fail=0：同上', '同上'],
+  ['U12', '键盘腿断言数', '23 条断言 fail=0：四只键', '同上'],
   ['U13', '深链/重载腿断言数', '各 4 条 fail=0', '同上'],
   ['U14', '通关腿的笔数', '17 笔全被接受', '同上（走的是本机起的那台服务器与 seed 5 那一盘）'],
   ['U15', '续局腿的档与画布', '4:1-17-25;8:32-48-56', '同上；这一串是浏览器 localStorage 里读回的存档，代码里没有第二份'],

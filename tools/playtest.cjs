@@ -190,7 +190,7 @@ async function main() {
     if(!g) throw new Error('对局页还没开起来（没有 window.herugolf.game）');
     const rect=v.canvas.getBoundingClientRect();
     const at=(x,y)=>{const e=document.elementFromPoint(x,y);return e?(e.id||e.tagName):'null';};
-    const o={rect:{l:rect.left,t:rect.top,w:rect.width,h:rect.height},iw:innerWidth,dpr:devicePixelRatio,
+    const o={rect:{l:rect.left,t:rect.top,w:rect.width,h:rect.height},iw:innerWidth,ih:innerHeight,dpr:devicePixelRatio,
       seed:g.seed,tier:g.tier,cells:[],btns:[],sweepTotal:g.n,sweepHits:0,balls:[],targets:[]};
     let miss=0;
     for(let i=0;i<g.n;i++){const r=v.cellRect(i);const x=rect.left+r.x+r.size/2,y=rect.top+r.y+r.size/2;
@@ -345,11 +345,16 @@ async function main() {
     await gotoFresh(BASE.replace(/\/$/, '') + '/#t=10x10/5&s=5');
     await evaluate(`(()=>{ if(!window.herugolf.game) window.herugolf.begin({tier:'10x10/5', seed:5}); return 1; })()`);
     await sleep(150);
+    // 覆写必须写在腿自己的调用里，并且腿要能读回证人：另起进程设 Emulation 等于把断言
+    // 重跑一遍。桌面两腿以前不设视口，读数就跟着"启动 Chrome 的那个人给的窗口"走
+    // （默认 800x600 时格边长只有 25px、工具栏落到视口外）—— 同一份页面在两台机器上
+    // 一绿一红，红的是尺不是页面。所以这里把桌面视口也钉成腿自己的常量。
     if (arg === 'touch') {
-      // 覆写必须写在腿自己的调用里，并且腿要能读回证人：另起进程设 Emulation 等于把桌面断言
-      // 重跑一遍。所以这里读回 innerWidth/dpr，并且只把它命名成"覆写在位"，不命名成"这是手机"。
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }, sessionId);
       await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 }, sessionId);
+      await sleep(400);
+    } else {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
       await sleep(400);
     }
     const p = await json(PREP);
@@ -372,6 +377,9 @@ async function main() {
       eq('移动覆写在位：innerWidth 读回 390', p.iw, 390);
       eq('移动覆写在位：devicePixelRatio 读回 3', p.dpr, 3);
       ck('窄屏下棋盘整个留在视口里', p.rect.l >= 0 && p.rect.w <= p.iw + 1, JSON.stringify({ rect: p.rect, iw: p.iw }));
+    } else {
+      eq('桌面覆写在位：innerWidth 读回 1280', p.iw, 1280);
+      eq('桌面覆写在位：innerHeight 读回 900', p.ih, 900);
     }
     ck('这一档确实有合法落点可点（选中球不是死球）', p.targets.length > 0, JSON.stringify(p.targets));
     eq(`hit box：球 ${p.balls[0].i} 的命中元素就是 canvas`, p.balls[0].hit, 'board');
@@ -399,7 +407,10 @@ async function main() {
       ck('状态行说出了为什么', /直线|R2/.test(dom2.state), dom2.state);
 
       // ③ 撤销按钮（真事件）
-      const bu = p.btns.find((b) => b.id === 'btn-undo');
+      // 按钮坐标每次现读：格子落子/拒绝都会改状态行文字，窄屏上它会换行并把工具栏推走
+      // 一两行 —— PREP 那份坐标到这一步可能已经过期（实测在 390 宽下就翻过一次车）。
+      const btnAt = async (id) => json(`(()=>{const b=document.getElementById('${id}').getBoundingClientRect();return {x:b.left+b.width/2,y:b.top+b.height/2,w:b.width,h:b.height};})()`);
+      const bu = await btnAt('btn-undo');
       await mouse(bu.x, bu.y);
       await touch(bu.x, bu.y);
       const domU = await json(DOMTXT);
@@ -410,7 +421,7 @@ async function main() {
 
       // ④ 换一局（真事件）：seed 必须来自存档里的自增游标，而不是日期/时间
       const sBefore = await json(`(()=>({seed:window.herugolf.game.seed,cur:window.herugolf.engine.Store.peekSeed()}))()`);
-      const bn = p.btns.find((b) => b.id === 'btn-new');
+      const bn = await btnAt('btn-new');
       await mouse(bn.x, bn.y);
       await touch(bn.x, bn.y);
       const sAfter = await json(`(()=>({seed:window.herugolf.game.seed,cur:window.herugolf.engine.Store.peekSeed(),tier:window.herugolf.game.tier}))()`);
@@ -422,11 +433,15 @@ async function main() {
       eq('换一局没把档位换掉', sAfter.tier, p.tier);
 
       // ⑤ 提示按钮（真事件）：规则名必须来自引擎那张表
-      // 先核对版面没在真事件之间挪过位：换了局之后若 hintTop/hintLeft 变了，那 PREP 那份
-      // 坐标就是旧的，这一次点击戳的是空气 —— 不写这条，红的形状是"提示 got 0"。
+      // 换一局之后状态行的文字长度会变（新一局的第一句提示比上一局短），工具栏因此可能上移
+      // 一两行 —— 那不算版面故障。真正要守的是两件事：棋盘没有换档（size/cols/boardW 不变），
+      // 以及 PREP 记下的那个坐标**仍然**命中提示按钮，否则这一次点击戳的是空气
+      // （红的形状是"提示 got 0"，看不出是坐标漂）。
       const g1 = await json(GEOM);
-      eq('换一局之后版面不整体挪位（PREP 的真事件坐标仍然有效）', `${g1.hintTop},${g1.hintLeft},${g1.size}`, `${g0.hintTop},${g0.hintLeft},${g0.size}`);
-      const bh = p.btns.find((b) => b.id === 'btn-hint');
+      eq('换一局后棋盘没有换档（size/cols/boardW 不变）', `${g1.size},${g1.cols},${g1.boardW}`, `${g0.size},${g0.cols},${g0.boardW}`);
+      const bh = await btnAt('btn-hint');
+      const oldHit = await json(`(()=>{const e=document.elementFromPoint(${bh.x},${bh.y});return e?e.id:'null';})()`);
+      eq('换一局后提示按钮的当前中心仍然命中自己', oldHit, 'btn-hint');
       await mouse(bh.x, bh.y);
       await touch(bh.x, bh.y);
       const domH = await json(DOMTXT);
@@ -472,8 +487,8 @@ async function main() {
     }
     if (arg === 'touch') {
       await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false }, sessionId).catch(() => {});
-      await cdp.send('Emulation.clearDeviceMetricsOverride', {}, sessionId).catch(() => {});
     }
+    await cdp.send('Emulation.clearDeviceMetricsOverride', {}, sessionId).catch(() => {});
     out({ leg: arg, cells: p.cells.length, buttons: p.btns.length, balls: p.balls.length });
   }
 

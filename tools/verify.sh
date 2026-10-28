@@ -4,15 +4,15 @@
 #   bash tools/verify.sh
 #
 # 这一层刻意做薄：它**不新增判据、不改任何一道的判据**，只负责"跑齐"与"把每道的退出码原样记进日志工件"。
-# 闸名单（九条，一条一个日志工件、工件里记自己的 GATE_RC）：
-#   * tools/check.mjs        —— 总门：三道静态门 + 七套逻辑 RESULT 行（它对七套的判据比这里更严：
+# 闸名单（十条，一条一个日志工件、工件里记自己的 GATE_RC）：
+#   * tools/check.mjs        —— 总门：三道静态门 + 八套逻辑 RESULT 行（它对八套的判据比这里更严：
 #                               自报名必须等于文件名算出的那一个、fails=0、checks>0、行数等于清单长度，
 #                               且 tools/*-test.mjs 与 tests/*.test.mjs 是自动发现的）
 #   * tools/doctest.mjs      —— 文档数字闸：README 里每个现值逐条对等式，每条配反空转的行数断言
 #                               （它自己还会现场再跑一遍 check.mjs 与 generator-probe.mjs 取现值，
 #                                 probe 的 ok=true ∧ fails=0 由它的 D6j/D6k 判 —— 所以 probe 早就在 CI 里）
-#   * 七套逻辑套件            —— rule-test / pencil-test / counter-test / scenarios /
-#                               r3-crossing / r4-pond / hole-two-balls：总门已经跑过它们，这里**再各跑一遍**
+#   * 八套逻辑套件            —— rule-test / pencil-test / counter-test / scenarios /
+#                               r3-crossing / r4-pond / hole-two-balls / save：总门已经跑过它们，这里**再各跑一遍**
 #                               不是为了重复判定，而是为了让每一套留下**自己的 rc 与自己的日志工件** ——
 #                               挤在总门那一行里时，"哪一套红了"只能去翻整档输出，工件也就只是两坨聚合日志。
 # 仍然不在这里跑的只有两条，理由各自不同（ci.yml 头部同一条口径）：
@@ -28,7 +28,7 @@ cd "$HERE" || exit 2
 GATES=("node tools/check.mjs" "node tools/doctest.mjs" \
   "node tools/rule-test.mjs" "node tools/pencil-test.mjs" "node tools/counter-test.mjs" \
   "node tools/scenarios.js" "node tests/r3-crossing.test.mjs" "node tests/r4-pond.test.mjs" \
-  "node tests/hole-two-balls.test.mjs")
+  "node tests/hole-two-balls.test.mjs" "node tests/save.test.mjs")
 RC_ALL=0
 LOGS=0
 for cmd in "${GATES[@]}"; do
@@ -64,4 +64,4 @@ if [ "$RC_ALL" -ne 0 ]; then
   echo "RESULT verify ok=false（有一道以上闸红，gates=${#GATES[@]} logs=${LOGS}：红因见上面点名的套件）"
   exit 1
 fi
-echo "RESULT verify ok=true gates=${#GATES[@]} logs=${LOGS}（总门 + 文档数字闸 + 七套逻辑套件都绿）"
+echo "RESULT verify ok=true gates=${#GATES[@]} logs=${LOGS}（总门 + 文档数字闸 + 八套逻辑套件都绿）"

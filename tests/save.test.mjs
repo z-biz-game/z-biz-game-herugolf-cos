@@ -1,186 +1,176 @@
 #!/usr/bin/env node
-// 存档的证人：判的是**行为**，不是"代码里出现过 localStorage"。
+// 存档的证人：判的是 js/store.js 的**行为**，不是"代码里出现过 localStorage"。
 //
-// 为什么要有这一张（派工简报 §2 的"行为成立"）：静态尺子只能看见 setItem/getItem 这两个串，
-// 而真正会红给玩家的三种事故都不在串里 ——
+// 为什么要有这一张：静态尺子只能看见 getItem/setItem 这两个串，而真正会红给玩家的
+// 四种事故都不在串里 ——
 //   ① 写进去的东西读不回来（宿主给的对象 setItem 静默失败，或 iOS 隐私模式当场抛）；
-//   ② 一条坏记录把整局冻死（`Object.assign(defaults, JSON.parse(raw))` 那种写法，
-//      `runs: null` 会盖掉默认数组，下一次 push 才炸，炸在离坏数据最远的地方）；
-//   ③ 恢复出来的局和存进去的局不是同一局（动数、玩家线、盘面对不上）。
-// 所以这里跑真回路：建一个真 game → 真走一步 → snapshot → 写 → 换一个 storage 实例读回 → restore
-// 到第二个 game，逐字段比。坏记录那半边给的是"只丢这一条"的计数证人。
-import { HerugolfGame } from '../js/core/game.js';
-import { loadStore, writeStore, upsertRun, recordWin, defaultStore, SAVE_KEY } from '../js/core/save.js';
+//   ② 一条坏记录把整局冻死（JSON.parse 抛错、或 `v` 对不上时整份存档消失且不留痕迹，
+//      界面分不清"第一次打开"与"档坏了"）；
+//   ③ 恢复出来的局和存进去的局不是同一局（tier/seed/cells/动数/提示数任一漂掉，
+//      玩家按「继续」看到的可能就是另一盘）；
+//   ④ seed 游标回退（换一局拿到同一个 seed，页面上印的 seed 7 就不再是那一张盘）。
+// 所以这里跑真回路：真 Store → 真写 → 换一个 storage 实例读回 → 逐字段比；
+// 坏档与隐私模式两侧各给一个"退回默认但留下 lastLoad 证据"的断言。
+import { Store, STORAGE_KEY } from '../js/store.js';
+import { TIERS } from '../js/engine/generate.js';
+
+const TIER = TIERS[0].key;
+const tierOf = (k) => TIERS.find((t) => t.key === k) || null;
 
 let checks = 0;
 const fails = [];
 const check = (cond, msg) => { checks++; if (!cond) fails.push(msg); };
 const eq = (a, b, msg) => check(Object.is(a, b), `${msg}（期望 ${JSON.stringify(b)}，实得 ${JSON.stringify(a)}）`);
 
-// 可替换的介质桩：每个实例自带一张 map，读/写/删都真的走一遍（共享一张就等于没测到"换实例"）
+// 可替换的介质桩：每个实例自带一张 map，读/写/删都真的走一遍（共享一张就等于没测到"换实例"）。
+// writes 是可数的：断言"确实落了盘"不能只看内存里那个对象。
 const mem = (init = {}) => {
   const map = { ...init };
-  return { map, getItem: (k) => (k in map ? map[k] : null), setItem: (k, v) => { map[k] = String(v); }, removeItem: (k) => { delete map[k]; } };
-};
-
-// ── ① 真回路：game → snapshot → write → 换实例 read → restore，逐字段对得上 ──
-let payload = null;
-let goodRun = null;
-{
-  let vt = 0;
-  const a = new HerugolfGame({ seed: 7, tierKey: '8x8/4', reduceMotion: true, clock: () => vt });
-  a.start();
-  // 拿引擎自己算出的合法走法走一步（不是硬编码坐标：题面变了证人跟着动）
-  let stepped = false;
-  for (const [ball, routes] of a.cands) {
-    if (!routes || !routes.length) continue;
-    a.selected = ball;
-    stepped = a.strokeTo(routes[0].stops[0]);
-    if (stepped) break;
-  }
-  check(stepped, '正例空转：一局里连一步合法走法都走不出来，后面比对没有意义');
-  check(a.lines.size >= 1 && a.moves >= 1, `走子没进真值（lines=${a.lines.size} moves=${a.moves}）`);
-
-  const st = mem();
-  const store = defaultStore();
-  const snap = a.snapshot();
-  upsertRun(store, snap);
-  const w = writeStore(st, store);
-  check(w.ok === true, `writeStore 说没落盘：${JSON.stringify(w)}`);
-  check(typeof st.map[SAVE_KEY] === 'string' && st.map[SAVE_KEY].length > 20, `介质里没有 ${SAVE_KEY} 这条记录`);
-  payload = st.map[SAVE_KEY];
-  goodRun = snap;
-
-  // 换一根 storage 实例（等于刷新一次页面）
-  const reload = loadStore(mem({ [SAVE_KEY]: payload }));
-  check(reload.report.parsed === true, `回读没解析成功：${JSON.stringify(reload.report)}`);
-  eq(reload.report.droppedRuns, 0, '刚写出去的正确记录被自己的解码器丢了');
-  const back = reload.store.runs[0];
-  check(back && typeof back === 'object', '回读的 runs[0] 不见了');
-  for (const k of ['seed', 'tier', 'board', 'moves', 'blocked', 'winSecs', 'state']) eq(back[k], snap[k], `字段 ${k} 回读不一致`);
-  eq(JSON.stringify(back.lines), JSON.stringify(snap.lines), '玩家线回读不一致');
-
-  const b = new HerugolfGame({ seed: 999, tierKey: '8x8/4', reduceMotion: true, clock: () => vt });
-  b.restore(back);
-  vt += 100;
-  b.update(); // 让 restore 排进落地表的那次 refresh 真落到步号边界上
-  eq(b.seed, snap.seed, 'restore 之后 seed 不是那一局');
-  eq(b.moves, snap.moves, 'restore 之后动数不是那一局');
-  eq(b.lines.size, snap.lines.length, 'restore 之后玩家线条数不对');
-  eq(b.snapshot().board, a.snapshot().board, 'restore 出来的盘面和原盘不是同一张');
-  const savedLines = [...b.lines.entries()].sort((x, y) => x[0] - y[0]);
-  check(savedLines.length === 0 || savedLines[0][1].length >= 1, '玩家线恢复成空数组（线在但落点没了）');
-}
-
-// ── ② 一条坏记录只丢那一条：其余照旧，且默认形状不被脏数据盖掉 ──
-{
-  const bad = {
-    v: 1,
-    prefs: { muted: 'yes', tier: '99x99/99', hintOn: 1 },
-    best: { '8x8/4': { moves: 0, secs: -3 }, '10x10/5': { moves: 5, secs: 12 }, bogus: { moves: 2, secs: 2 } },
-    runs: [
-      goodRun,
-      null,
-      'a string',
-      { seed: 'abc', tier: '8x8/4', board: '', lines: [] },
-      { seed: 3, tier: '8x8/4', board: 42, lines: [] },
-      { seed: 3, tier: '8x8/4', board: '', lines: [{ start: 99999, stops: [1] }] },
-      { seed: 3, tier: '8x8/4', board: '', lines: 'nope' },
-    ],
-    wins: '12',
-    played: null,
+  const s = {
+    map, writes: 0, failWrite: false, failRead: false,
+    getItem(k) { if (s.failRead) throw new Error('SecurityError'); return k in map ? map[k] : null; },
+    setItem(k, v) { if (s.failWrite) throw new Error('QuotaExceededError'); s.writes++; map[k] = String(v); },
+    removeItem(k) { delete map[k]; },
   };
-  const st = mem({ [SAVE_KEY]: JSON.stringify(bad) });
-  const r = loadStore(st);
-  eq(r.report.parsed, true, '坏记录不该让整档解析失败');
-  eq(r.store.runs.length, 1, '只该留下那一条正确记录');
-  eq(r.report.keptRuns, 1, 'keptRuns 计数与实收不符');
-  eq(r.report.droppedRuns, 6, 'droppedRuns 没数到那 6 条坏记录（坏一条丢一条没成立）');
-  eq(r.store.runs[0].seed, goodRun.seed, '留下的那条不是原来的好记录');
-  eq(r.store.prefs.muted, false, 'prefs.muted 被字符串 "yes" 盖成 truthy');
-  eq(r.store.prefs.tier, defaultStore().prefs.tier, 'prefs.tier 收进了菜单外的档');
-  eq(r.store.prefs.hintOn, true, 'prefs.hintOn 被数字 1 盖成非布尔');
-  eq(Object.keys(r.store.best).join(','), '10x10/5', 'best 里混进了非法档名或非法数值');
-  eq(r.store.wins, 12, 'wins 没把字符串 "12" 折成整数');
-  eq(r.store.played, 0, 'played: null 没退回默认值');
-  // 关键行为：解出来的 runs 必须还是数组，push 得动（那才是"白屏"事故的正主）
+  return s;
+};
+const SNAP = { tier: TIER, seed: 7, cells: '4:1-17-25;8:32-48-56', strokes: 6, hints: 1, elapsedMs: 91000, savedAt: 1700000000000 };
+
+// ── ① 无档：第一次打开不许被当成"档坏了" ──
+{
+  const s = new Store(mem());
+  eq(s.lastLoad.ok, true, '无档时 lastLoad.ok');
+  eq(s.lastLoad.why, '没有存档', '无档时 lastLoad.why 说得清"没档"');
+  eq(s.get('sound'), true, '无档时 settings.sound 取默认 true');
+  eq(s.get('motion'), true, '无档时 settings.motion 取默认 true');
+  eq(s.peekSeed(), 1, '无档时 seed 游标从 1 起');
+  eq(s.resume(tierOf), null, '无档时 resume 为 null');
+  eq(Object.keys(s.data.best).length, 0, '无档时 best 为空');
+  eq(s.data.totals.solved + s.data.totals.hints + s.data.totals.ms, 0, '无档时 totals 三项全 0');
+}
+
+// ── ② 真回路：写 → 换实例读 → 逐字段对得上 ──
+{
+  const media = mem();
+  const a = new Store(media);
+  a.set('sound', false);
+  eq(a.peekSeed(), 1, 'takeSeed 之前 peekSeed 不会自己前进');
+  eq(a.takeSeed(), 1, '第一次换一局拿到 1');
+  eq(a.takeSeed(), 2, '第二次换一局拿到 2');
+  a.putResume(SNAP);
+  const rec = a.record(TIER, { strokes: 6, hints: 1, ms: 91000 });
+  eq(rec.improved, true, '第一次成绩一定刷新纪录');
+  check(media.writes >= 4, `每个写入口都真的落了盘（writes=${media.writes}）`);
+
+  const b = new Store(media);
+  eq(b.lastLoad.ok, true, '读回时 lastLoad.ok');
+  eq(b.get('sound'), false, '读回 settings.sound 是写进去的 false');
+  eq(b.get('motion'), true, '没写过的设置读回默认 true（深合并，不是整块覆盖）');
+  eq(b.peekSeed(), 3, 'seed 游标跨实例继续（下一次换一局是 3）');
+  const r = b.resume(tierOf);
+  check(!!r, '读回 resume 非 null');
+  for (const k of ['tier', 'seed', 'cells', 'strokes', 'hints', 'elapsedMs', 'savedAt']) {
+    eq(r && r[k], SNAP[k], `resume.${k} 原样读回`);
+  }
+  eq(b.data.best[TIER] && b.data.best[TIER].strokes, 6, 'best 的动数读回');
+  eq(b.data.totals.solved, 1, 'totals.solved 读回');
+  check(typeof b.data.best[TIER].at === 'number' && b.data.best[TIER].at > 0, 'best.at 是一个真实时间戳');
+}
+
+// ── ③ resume 的形状闸：形状不对的档不许冒充"能续" ──
+{
+  const s = new Store(mem());
+  const bad = (patch, msg) => {
+    s.putResume({ ...SNAP, ...patch });
+    eq(s.resume(tierOf), null, msg);
+  };
+  bad({ tier: '9x9/4' }, '不认识的档位不许续');
+  bad({ seed: 1.5 }, '非整数 seed 不许续');
+  bad({ cells: 42 }, '非字符串 cells 不许续');
+  bad({ strokes: '6' }, '字符串 strokes 不许续');
+  bad({ hints: null }, 'null hints 不许续');
+  s.data.resume = SNAP;
+  check(!!s.resume(tierOf), '形状全对的快照可以续（上面每一条坏档都有正对照）');
+  s.clearResume();
+  eq(s.resume(tierOf), null, 'clearResume 之后续不上');
+}
+
+// ── ④ 坏档：退回默认，但必须留下"坏在哪一条"的证据 ──
+{
+  const media = mem({ [STORAGE_KEY]: '{not json' });
+  const s = new Store(media);
+  eq(s.lastLoad.ok, false, '坏 JSON：lastLoad.ok=false');
+  check(/解析失败/.test(s.lastLoad.why), `坏 JSON：why 说得出是解析失败（实得「${s.lastLoad.why}」）`);
+  eq(s.lastLoad.raw, '{not json', '坏 JSON：原文留在 lastLoad.raw（界面要能说出"档是坏的"）');
+  eq(s.get('sound'), true, '坏 JSON：设置退回默认');
+  eq(s.peekSeed(), 1, '坏 JSON：seed 游标退回 1，不会卡在 0');
+  eq(s.data.totals.solved, 0, '坏 JSON：战绩不会带半截');
+  s.set('sound', false);
+  eq(JSON.parse(media.map[STORAGE_KEY]).settings.sound, false, '坏档之后仍能正常写入（不是永久只读）');
+}
+{
+  const media = mem({ [STORAGE_KEY]: JSON.stringify({ v: 2, settings: { sound: false } }) });
+  const s = new Store(media);
+  eq(s.lastLoad.ok, false, '版本不对：lastLoad.ok=false');
+  eq(s.get('sound'), true, '版本不对：不许把 v2 的字段硬塞进 v1');
+}
+
+// ── ⑤ 隐私模式：读抛、写抛都不许把这一局带走 ──
+{
+  const media = mem();
+  media.failRead = true;
+  const s = new Store(media);
+  eq(s.lastLoad.ok, false, 'setItem/getItem 抛错时 lastLoad.ok=false');
+  check(/读不到存档/.test(s.lastLoad.why), `读抛时 why 点名"读不到存档"（实得「${s.lastLoad.why}」）`);
+  media.failRead = false;
+  media.failWrite = true;
   let threw = '';
-  try {
-    upsertRun(r.store, { ...goodRun, seed: goodRun.seed + 1 });
-    upsertRun(r.store, { ...goodRun, seed: goodRun.seed + 2 });
-  } catch (e) { threw = String(e && e.message ? e.message : e); }
-  eq(threw, '', '脏档回读之后 push 就炸（Object.assign 那一族的事故）');
-  eq(r.store.runs.length, 3, '新写的记录没并进去');
+  try { s.set('sound', false); s.takeSeed(); } catch (e) { threw = e.message; }
+  eq(threw, '', '写抛时 Store 不向上抛（隐私模式还能继续玩）');
+  eq(s.get('sound'), false, '写失败不影响本局内存里的设置');
 }
 
-// ── ③ 半截 JSON / 类型不对的顶层：退默认档并如实报告原因 ──
+// ── ⑥ 深合并：缺字段的档只补缺的那几个，不把整份结构换成默认 ──
 {
-  const half = loadStore(mem({ [SAVE_KEY]: '{"v":1,"runs":[' }));
-  eq(half.report.reason, 'bad-json', '半截 JSON 没被点名');
-  eq(Array.isArray(half.store.runs), true, '坏 JSON 之后默认档的 runs 不是数组');
-  const arr = loadStore(mem({ [SAVE_KEY]: '[1,2,3]' }));
-  eq(arr.report.reason, 'not-an-object', '顶层数组没被点名');
-  const empty = loadStore(mem({}));
-  eq(empty.report.reason, 'empty', '空介质应报 empty 而不是抛');
-  const gone = loadStore(null);
-  eq(gone.report.parsed, false, '没有介质时 parsed 该是 false');
-  eq(Array.isArray(gone.store.runs) && gone.store.runs.length === 0, true, '没有介质时默认档不干净');
+  const media = mem({ [STORAGE_KEY]: JSON.stringify({ v: 1, settings: { sound: false }, seedCounter: 0 }) });
+  const s = new Store(media);
+  eq(s.lastLoad.ok, true, '缺字段的 v1 档仍算读成功');
+  eq(s.get('sound'), false, '缺字段：写过的 sound 保留');
+  eq(s.get('motion'), true, '缺字段：没写过的 motion 补默认');
+  eq(s.peekSeed(), 1, 'seedCounter 为 0 时修回 1');
+  eq(s.data.totals.solved, 0, '缺 totals 时补默认 0');
 }
 
-// ── ④ 介质本身会抛（iOS 隐私模式的 setItem）：报告失败，不许把异常抛给帧循环 ──
+// ── ⑦ 纪录比较：先提示数、再动数、最后时间；三条都要有正反两面 ──
 {
-  const domErr = (name) => { const e = new Error(name); e.name = name; return e; };
-  const boom = { getItem: () => { throw domErr('SecurityError'); }, setItem: () => { throw domErr('QuotaExceededError'); } };
-  let threw = '';
-  const r = (() => { try { return writeStore(boom, defaultStore()); } catch (e) { threw = String(e); return null; } })();
-  eq(threw, '', 'writeStore 把介质异常抛了出来（玩家侧就是一个未捕获错误）');
-  eq(r && r.ok, false, 'setItem 抛了却报告成功');
-  eq(r && r.reason, 'QuotaExceededError', '写失败没点名原因');
-  const rl = loadStore(boom);
-  eq(rl.report.reason, 'storage-unavailable', 'getItem 抛了没被认成介质不可用');
-  eq(Array.isArray(rl.store.runs), true, '介质异常时默认档不干净');
+  const s = new Store(mem());
+  const probe = (hints, strokes, ms) => s.record(TIER, { hints, strokes, ms }).improved;
+  eq(probe(1, 6, 90000), true, '首纪录：刷新');
+  eq(probe(2, 1, 1000), false, '提示数更多：不算更好（哪怕动数少得多）');
+  eq(probe(1, 7, 1000), false, '同提示、动数更多：不算更好（哪怕时间更短）');
+  eq(probe(1, 6, 91000), false, '同提示同动数、时间更长：不算更好');
+  eq(probe(1, 5, 99999), true, '同提示、动数更少：刷新（时间不参与这一层的否定）');
+  eq(probe(0, 5, 100), true, '提示数更少：刷新');
+  eq(s.data.best[TIER].hints, 0, 'best 记的是最新那次更好成绩的提示数');
+  eq(s.data.best[TIER].strokes, 5, 'best 记的是最新那次更好成绩的动数');
+  eq(s.data.totals.solved, 6, '每一次通关都记进 totals.solved（不管破没破纪录）');
+  eq(s.data.totals.hints, 1 + 2 + 1 + 1 + 1 + 0, 'totals.hints 是每次真实提示数之和');
+  eq(s.data.totals.ms, 90000 + 1000 + 1000 + 91000 + 99999 + 100, 'totals.ms 是每次真实用时之和');
 }
 
-// ── ⑤ 只写不读的介质（探针要能认出来）：写进去立刻读不回就是不可用 ──
+// ── ⑧ seed 游标：只增不减，且新开局一定拿到没出现过的号 ──
 {
-  const mute = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-  const PROBE = SAVE_KEY + ':probe';
-  mute.setItem(PROBE, '1');
-  eq(mute.getItem(PROBE) === '1', false, '探针写下去居然读得回，这条判据抓不到"静默失败的介质"');
-  // 上面这一对就是 main.js 里那段写入回读探针的语义：读不回 → 退回内存档，不拦开局
-  const st = defaultStore();
-  upsertRun(st, { ...goodRun, seed: 1234 });
-  const r = writeStore(mute, st);
-  eq(r.ok, true, 'writeStore 对"不抛的介质"报成功是对的（抛不抛是介质的事）');
-  eq(loadStore(mute).store.runs.length, 0, '静默失败的介质读回来必须有存档（应当没有）');
+  const media = mem();
+  const a = new Store(media);
+  const seen = new Set();
+  for (let i = 0; i < 6; i++) seen.add(a.takeSeed());
+  eq(seen.size, 6, '连续六次换一局拿到六个不同的 seed');
+  const b = new Store(media);
+  eq(b.peekSeed(), 7, '重开页面后游标接着走（不会拿回已经用过的 1）');
+  check(b.peekSeed() > Math.max(...seen), '游标严格大于历史最大号（"同一个 seed + 同一档必同一张盘"的前提）');
 }
 
-// ── ⑥ 记录数封顶 24 条，战绩只留更好的那一档 ──
-{
-  const st = defaultStore();
-  for (let i = 0; i < 30; i++) upsertRun(st, { ...goodRun, seed: 1000 + i });
-  eq(st.runs.length, 24, 'upsertRun 没把记录数封顶');
-  eq(st.runs[0].seed, 1029, '最新一局没排在最前（数组下标就是"最近优先"）');
-  // 绕过 upsertRun 的封顶，直接塞一份 30 条的脏盘：解码这一侧也必须自己截到 24 条
-  const fat = { ...defaultStore(), runs: Array.from({ length: 30 }, (_, i) => ({ ...goodRun, seed: 2000 + i })) };
-  const back = loadStore(mem({ [SAVE_KEY]: JSON.stringify(fat) }));
-  eq(back.store.runs.length, 24, '回读没截到 24 条');
-  eq(back.report.droppedRuns, 6, '超出 24 条的那 6 条没被数进 droppedRuns');
-  eq(back.store.runs[0].seed, 2000, '截断截错了头（该留最近优先的前 24 条）');
-  const same = defaultStore();
-  upsertRun(same, { ...goodRun, seed: 7, moves: 9 });
-  upsertRun(same, { ...goodRun, seed: 7, moves: 4 });
-  eq(same.runs.length, 1, '同 seed 同 tier 没就地覆盖');
-  eq(same.runs[0].moves, 4, '就地覆盖没生效');
-  const w = defaultStore();
-  recordWin(w, { tier: '8x8/4', moves: 10, winSecs: 30 });
-  recordWin(w, { tier: '8x8/4', moves: 15, winSecs: 20 });
-  eq(w.best['8x8/4'].moves, 10, '更差的一局盖掉了最好成绩');
-  recordWin(w, { tier: '8x8/4', moves: 10, winSecs: 20 });
-  eq(w.best['8x8/4'].secs, 20, '同动数更少时间该刷新纪录');
-  eq(w.wins, 3, '通关计数与实际通关次数不符');
-}
-
-console.log(`RESULT save-test ok=${fails.length === 0} checks=${checks} fails=${fails.length}`);
-for (const f of fails) console.error('  ✗ ' + f);
-process.exit(fails.length ? 1 : 0);
+const res = `RESULT save-test ok=${fails.length === 0} checks=${checks} fails=${fails.length}`;
+if (fails.length) for (const f of fails) console.error('  ✗ ' + f);
+console.log(res);
+process.exit(fails.length === 0 ? 0 : 1);

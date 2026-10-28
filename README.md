@@ -28,7 +28,7 @@ Electron 壳、GitHub Pages、任何线上 URL。`npm test` 仍是唯一的**逻
 
 ## 八条承诺，每条都是一条会红的命令
 
-读数那一列全部来自**本轮复跑**（本机 2026-10-02，`npm test` 交出的八行 RESULT，以及
+读数那一列全部来自**本轮复跑**（本机 2026-10-28，`npm test` 交出的九行 RESULT，以及
 `node tools/balance.mjs`、`node tools/generator-probe.mjs` 各自的结论行），不是引用上一轮的记录。
 这句话现在不再只由自觉守着：有代码出处的每个现值被 `tools/doctest.mjs` 钉成等式，没有代码出处的
 逐条进那张 unpinned 清单（见「文档数字闸与破坏试验台账」那一节）。
@@ -42,18 +42,18 @@ Electron 壳、GitHub Pages、任何线上 URL。`npm test` 仍是唯一的**逻
 | **难度按球数长，不是按格数长**（这一族的命门） | `node tools/balance.mjs` 轴 1（尺寸钉死 10x10，球数 3/4/5/6/7/9）与轴 2（球数钉死 5，尺寸 8x8→18x18，稀有规则发火盘数按每 100 格归一） | 176 条断言 0 红；必经格 12/200 → 145/200、两球两洞 0/200 → 83/200（3 球 → 11 球）；最高档严格大于最低档且不为 0 |
 | **每颗线索（球 / H / 池）都单独摘除复核过** | `node tools/balance.mjs` 的极小性那条（摘完必须"不再唯一"或"铅笔推不完"至少一条成立）＋ `js/engine/generate.js:auditClueNecessity` | 每档 多余 0 颗 / 没证到 0 颗 / 已证 200/200；口径是**单颗摘除意义的极小**，不是线索最少 |
 | **几何规则有两份互不抄的实现** | `node tests/r3-crossing.test.mjs`、`node tests/r4-pond.test.mjs`、`node tests/hole-two-balls.test.mjs`（`routes.js` 的候选枚举 vs `verify.js` 从题面文字从头再走一遍） | 81 / 53 / 174 条断言 0 红；官方 5×5 的 10 条变异逐条被拒，且逐条对上**实测的归因规则集合** |
-| **清单里没有空头命令** | `node tools/check.mjs` 的清单门（读 `package.json` 自己） | 14 条 scripts 指向的入口全部在磁盘上；这一门落地时先跑了一次阴性自证：注入 `tools/ceiling.mjs` 等三个不存在的入口，它当场报 3 条红且 rc≠0 |
+| **清单里没有空头命令** | `node tools/check.mjs` 的清单门（读 `package.json` 自己） | 15 条 scripts 指向的入口全部在磁盘上；这一门落地时先跑了一次阴性自证：注入 `tools/ceiling.mjs` 等三个不存在的入口，它当场报 3 条红且 rc≠0 |
 
-一条命令跑全部（三道静态门 + 七套逻辑 RESULT 行，另加总门自己那一行）：
+一条命令跑全部（三道静态门 + 八套逻辑 RESULT 行，另加总门自己那一行）：
 
 ```
 npm test                     # = node tools/check.mjs
-bash tools/verify.sh         # 本地与 CI 的同一条入口：九道闸 = 总门 + 文档数字闸 + 七套逻辑套件各一条 rc
+bash tools/verify.sh         # 本地与 CI 的同一条入口：十道闸 = 总门 + 文档数字闸 + 八套逻辑套件各一条 rc
 ```
 
-结论行是 `RESULT check ok=true checks=61 fails=0`，而**整趟交出八行 RESULT**：
+结论行是 `RESULT check ok=true checks=66 fails=0`，而**整趟交出九行 RESULT**：
 `rule-test 194 / pencil-test 89 / counter-test 59 / scenarios 13 / hole-two-balls-test 174 /
-r3-crossing-test 81 / r4-pond-test 53 / check 61`，全部 `ok=true fails=0`。
+r3-crossing-test 81 / r4-pond-test 53 / save-test 67 / check 66`，全部 `ok=true fails=0`。
 总门把每套**自报的 RESULT 行原样再念一遍**，所以"少跑了一套"在日志里读得出来：清单里的套件必须在磁盘上、
 必须真的跑起来、必须打 RESULT 行、RESULT 的自报名必须等于由文件名算出的那一个、`checks>0`、
 且收到的行数必须等于清单长度。`tools/*-test.mjs` 与 `tests/*.test.mjs` 是自动发现的 ——
@@ -61,7 +61,7 @@ r3-crossing-test 81 / r4-pond-test 53 / check 61`，全部 `ok=true fails=0`。
 
 `bash tools/verify.sh` 那一层现在交出**九行带名色的读数**（每条闸一行 `▶ 命令` + 一行 `rc=`，再把它自己那一行
 `RESULT <套件> ok= …` 原样念回来），并且每条闸把自己的 `GATE_RC` 记进 `_tmp-herugolf-verify-<tag>.log`：
-七套逻辑套件各占一条，是因为挤在总门那一行里时"哪一套红了"只写在整档输出里，工件那一侧读不到名。
+八套逻辑套件各占一条，是因为挤在总门那一行里时"哪一套红了"只写在整档输出里，工件那一侧读不到名。
 两条口径同时守死：`logs` 与 `gates` 必须相等（某条闸被坏路径悄悄跳过 ⇒ 当场 `ok=false`，不给你绿），
 闸红时入口还会把日志里那些 `✗ 套件名: …` 的红因挑出来点名。这一条不是散文：把 `tests/r4-pond.test.mjs`
 掰断一根判据再跑总入口，`verify.sh` 退 1 且输出里出现 `r4-pond-test`（副本里做的，仓内一根判据没动）。
@@ -119,13 +119,15 @@ BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
 | 腿 | 命令 | 读数 |
 | --- | --- | --- |
 | 开机 | `node tools/playtest.cjs open http://127.0.0.1:5341/` | `window.herugolf` 在、零 console 输出、零异常 |
-| 鼠标真事件 | `… leg mouse` | 28 条断言 fail=0：100 格每格中心都命中 canvas、四个按钮中心都命中自己、落子 0→1、斜对面被 R2 拒、撤销退回 0、换一局 seed 自增、提示计数 1 |
-| 触屏真事件 | `… leg touch`（390×844·dpr3 覆写） | 31 条断言 fail=0：同上 + 窄屏整盘留在视口里 |
-| 键盘真事件 | `… leg keys` | 21 条断言 fail=0：四只键各「1 seen/1 handled/0 repeat/1 total」、方向键落子、退格清空、H 出提示、空格换球 |
+| 鼠标真事件 | `… leg mouse`（1280×900·dpr1 覆写） | 31 条断言 fail=0：100 格每格中心都命中 canvas、四个按钮中心都命中自己、落子 0→1、斜对面被 R2 拒、撤销退回 0、换一局 seed 自增、提示计数 1 |
+| 触屏真事件 | `… leg touch`（390×844·dpr3 覆写） | 32 条断言 fail=0：同上 + 窄屏整盘留在视口里 |
+| 键盘真事件 | `… leg keys`（1280×900·dpr1 覆写） | 23 条断言 fail=0：四只键各「1 seen/1 handled/0 repeat/1 total」、方向键落子、退格清空、H 出提示、空格换球 |
 | 深链 / 重载 | `… nav … same`、`… reload` | 各 4 条 fail=0：片段导航 timeOrigin 与文档身份不变；reload 两个都换 |
 | 通关 | `… eval`（引擎那一解逐动走界面唯一入口 `write()`） | `10x10/5` seed 5：17 笔全被接受（`refused=0`）、`status=won`、`verify()` 0 错、5/5 进洞、胜利遮罩有矩形、纪录写进 `best` 与 `totals.solved=1` |
 | 续局 | `… eval` 存档 → `reload` → `… eval` 按「继续」 | 换文档（`doc11umgm0i`→`doc1h56uyr6`）后读回同一串 `4:1-17-25;8:32-48-56`、动数 6、画布 384×384 且渲染层绑到这一盘 |
 | 场景腿 | `… scenario play` | **红（rc=1），原样记着不粉饰**：`tools/scenarios.js` 是纯 Node 夹具（带 `from 'node:process'`，且从不定义 `window.__ng`），注进页面就是 `SyntaxError: Cannot use import statement outside a module`。浏览器侧场景模块**没有落地**，所以这条不是承诺，也不进上面那张表 |
+
+两条桌面腿的视口由腿自己在调用里钉住（1280×900），并读回 `innerWidth/innerHeight` 当证人 ——不设视口时读数跟着启动 Chrome 的那个窗口走，默认 800×600 下格边长只有 25px、工具栏落到视口外，同一份页面会一绿一红。按钮坐标也在每次真事件前现读：状态行换行会把工具栏推走一两行，沿用 PREP 的旧坐标会在窄屏上戳空（这一条是实测翻车后补的）。
 
 落库时抓到的四处「整局不可玩 / 假绿」，都在这一轮修掉了：
 
@@ -145,9 +147,9 @@ BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
 `npm test` 的头三段在读源码的那一层打死东西，因为逻辑测试**当天**照样全绿：
 
 ```
-语法门：node --check 28/28 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：1/1 个 shell 脚本，零失败
+语法门：node --check 30/30 个文件通过（js、tools、tests 下所有 .js/.mjs/.cjs，跳过 _tmp-*，另点名根上的 server.cjs）；bash -n：1/1 个 shell 脚本，零失败
 禁词门：7 个引擎文件 × 7 个禁词，注释外命中 0 处
-清单门：package.json 的 14 条 scripts 中 14 条点名了文件入口，全部在磁盘上
+清单门：package.json 的 15 条 scripts 中 15 条点名了文件入口，全部在磁盘上
 ```
 
 - **禁词**是 `Math.random`、`Date.now`/`new Date`、`performance.now`、`process.env`、`require(`、
@@ -166,7 +168,7 @@ BASE_URL=http://127.0.0.1:5341/ node tools/playtest.cjs leg mouse
 上面每一格的读数、档位清单、两张绝对线表、端口、样本量、断言条数，现在由 `tools/doctest.mjs` 逐条对等式：
 它把 README 里的每个「现值」用正则解析出来，与代码或闸的**现在值**一比，每条解析都配一条「解析到几行」的
 反空转断言 —— 正则没命中不是绿，是红（文档改形状、删句子都算红）。真值从三处取：`js/engine/*` 与
-`tools/*` 的常数与数组、`tools/check.mjs` 这一趟现场打出的八行 RESULT 与三道静态门那一三行、
+`tools/*` 的常数与数组、`tools/check.mjs` 这一趟现场打出的九行 RESULT 与三道静态门那一三行、
 `tools/generator-probe.mjs` 这一趟的 RESULT 行。这里**不比秒数**：文档第「复跑这些数字」那一节自己写着
 "本 README 不写多少秒跑完" —— 于是这两趟只取 RESULT 行，墙钟量既不写进文档也不写进等式。
 
@@ -203,6 +205,7 @@ tools/      check.mjs（总门）rule-test pencil-test counter-test scenarios.js
             generator-probe.mjs（观测器）balance.mjs（难度实测 + 绝对线表 + ANTI-DRIFT）
             playtest.cjs（最小 CDP 台架：open/leg mouse|touch|keys/nav/reload/witness/answer/eval/logs）
 tests/      hole-two-balls.test.mjs r3-crossing.test.mjs r4-pond.test.mjs   ← 三张规则证人
+            save.test.mjs（js/store.js 的行为证人：真写→换实例读回、坏档与隐私模式两侧）
 index.html  css/game.css  server.cjs（零依赖静态服务器，同时答根路径与 /z-biz-game-herugolf-cos/ 前缀）
 js/         main.js（接线层：指针+键盘+计时+存档+闸要的 window.herugolf 面）
             store.js（localStorage：设置/纪录/seed 游标/续局快照）theme.js（调色板 → CSS 变量）
@@ -210,7 +213,7 @@ js/         main.js（接线层：指针+键盘+计时+存档+闸要的 window.h
             ui/game.js（界面状态机：只做点击几何与拒绝理由，赢不赢交给 verify()）
 ```
 
-`合计：源文件 28、引擎 7、套件 7（点名 4 + tools 自动发现 3 + tests 自动发现 3）、跑成 7` 是总门自己报的账。
+`合计：源文件 30、引擎 7、套件 8（点名 4 + tools 自动发现 3 + tests 自动发现 4）、跑成 8` 是总门自己报的账。
 
 引擎里最硬的一条结构约束是 **`verify.js` 一条 `routesFor` 的代码都不许 import**：连方向表都不用，
 动与动之间的几何是从（起点格, 落点格）现算的。它是全仓唯一一条"不许抄自己"的通道 ——
@@ -271,7 +274,7 @@ nodes p95 线        球数 3/4/5/6/7/9/11 = 50 / 50 / 100 / 100 / 100 / 100 / 2
   `EXTRA_JS` 仍然只点名磁盘上真有的 `server.cjs`。
 - **不承诺 Electron 壳**（树里没有）、**不承诺 playtest 的场景腿**（`scenario <name>` 实测 rc=1，见上面那张表最后一行）。
 
-**没有覆盖**（`bash tools/verify.sh` 那九条闸之外，仍然只有人跑过、没有常驻门的东西，一条条列在这里）：
+**没有覆盖**（`bash tools/verify.sh` 那十条闸之外，仍然只有人跑过、没有常驻门的东西，一条条列在这里）：
 `node tools/balance.mjs` 的那 176 条（绝对墙钟线读机器负载 ⇒ 只本地跑，理由见「一条命令跑全部」那一节）、
 `node tools/sabotage.mjs` 的破坏台账（要改文件、要回写台账 rc，属于"证明闸会红"那一层）、
 `node tools/playtest.cjs` 的浏览器腿（要本机 Chrome + 本机 `server.cjs`，`npm test` 与 CI 都跑不动它）。
@@ -290,7 +293,7 @@ CDP 口 9350（`tools/playtest.cjs` 的默认值，本轮实测空闲后才用�
 ## 复跑这些数字
 
 ```
-npm test                                  # 八行 RESULT，全部 ok=true fails=0
+npm test                                  # 九行 RESULT，全部 ok=true fails=0
 node tools/doctest.mjs                      # 文档数字闸：条数 + 失败清单（rc=0 才算守住）
 node tools/sabotage.mjs                     # 破坏台账：四把刀必须各把一条 FAIL 弄红
 node tools/balance.mjs                    # 每档 200 盘：出货率/墙钟/nodes/零猜测/极小性/两条阶梯

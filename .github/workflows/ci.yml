@@ -1,7 +1,7 @@
 name: ci
 
 # 这个 workflow 里**没有任何只在 CI 才有的门**：跑的就是本地那一条 `bash tools/verify.sh`。
-# 反过来说也一样 —— verify.sh 串起来的就是这里的九道闸（总门、文档数字闸，再加七套逻辑套件各自一条 rc）。
+# 反过来说也一样 —— verify.sh 串起来的就是这里的十道闸（总门、文档数字闸，再加八套逻辑套件各自一条 rc）。
 # 仍然不在这里跑的只有两条，理由写在 tools/verify.sh 的文件头：
 #   * `node tools/balance.mjs`：它的判据里有一条**绝对墙钟线**（墙钟 p95 ≤ 按球数写死的 ms 线），那一列读的是
 #     跑它的那台机器的负载 ⇒ 常驻门会把本机负载读成回归。**理由不是嫌它慢**：默认口径（每档 200 盘）本机
@@ -26,7 +26,7 @@ jobs:
           node-version: '20'
       - name: 统一入口（与本地同一条命令）
         run: bash tools/verify.sh
-      - name: 把九道闸的日志工件留档（每条闸一个 _tmp-herugolf-verify-*.log，rc 记在工件里）
+      - name: 把十道闸的日志工件留档（每条闸一个 _tmp-herugolf-verify-*.log，rc 记在工件里）
         if: always()
         uses: actions/upload-artifact@v4
         with:

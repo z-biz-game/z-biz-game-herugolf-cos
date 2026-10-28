@@ -27,16 +27,16 @@ package.json 没有 `start` / `dev` 脚本；入口是 `index.html`。
 
 | 指标 | 读数 |
 | --- | ---: |
-| 跟踪文件 | 73 |
-| 应用代码 | 8,154 行（JS 7,224 / CSS 782 / HTML 148） |
-| 测试/工具文件 | 17 个 |
+| 跟踪文件 | 47 |
+| 应用代码 | 3,615 行（JS 2,864 / CSS 603 / HTML 148） |
+| 测试/工具文件 | 15 个 |
 | 依赖 | `dependencies` 0 / `devDependencies` 0 |
-| 位图资产（不含 shots） | 23 个 / 2081 KB |
+| 位图资产（不含 shots） | 6 个 / 191 KB |
 
 ## 目录
 
 ```
-.github .gitignore LICENSE README.md assets css icons index.html js manifest.webmanifest package.json server.cjs sw.js tests tools web
+.github .gitignore LICENSE README.md css icons index.html js manifest.webmanifest package.json server.cjs sw.js tests tools
 ```
 
 ## 已知边界

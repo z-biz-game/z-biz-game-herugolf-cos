@@ -11,9 +11,9 @@
 // 所以：清单里的套件必须在磁盘上存在、必须真的跑起来、必须打 RESULT 行、RESULT 自报名必须等于
 // 由文件名算出的那一个、ok 必须 true、fails 必须 0、checks 必须 > 0，且收到的行数必须等于清单长度。
 //
-// 第一阶段只有纯 Node 部分：没有 server.cjs、没有 tools/verify.sh（浏览器壳与 Electron 壳都还没开工，
-// 它们的入口不许写进来，写了就是空头承诺）。仓根的 _tmp-* 临时探针一律跳过 —— 它们不归门禁管，
-// 但也不许混进 commit（.gitignore 里那条是安全带，不是许可证）。
+// 第二阶段起浏览器壳与统一入口都已落地：EXTRA_JS 点名根上的 server.cjs、SHELLS 点名
+// tools/verify.sh（两者都只在磁盘上真有它时进语法门）。仓根的 _tmp-* 临时探针一律跳过 ——
+// 它们不归门禁管，但也不许混进 commit（.gitignore 里那条是安全带，不是许可证）。
 import { readdirSync, statSync, existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,7 @@ const ENGINE_DIR = 'js/engine';
 const ENGINE_MODULES = ['counter.js', 'generate.js', 'grid.js', 'pencil.js', 'rng.js', 'routes.js', 'verify.js'];
 const MIN_TEST_FILES = 3; // tests/ 下至少三张证人（r3-crossing / r4-pond / hole-two-balls）
 
-// 清单：tools 里点名的四套（三套逻辑 + 夹具的三条真值证人）+ 两处自动发现：
+// 清单：tools 里点名的四套（三套纯逻辑 + scenarios 那张官方盘/变异夹具）+ 两处自动发现：
 //   tools/*-test.mjs —— 下一轮加进来的 golden-test 一落地就自动进闸，不许出现"进了 package.json
 //                        却没进门禁"的那种套件；
 //   tests/*.test.mjs —— 同上，一张新证人不必改这里。
